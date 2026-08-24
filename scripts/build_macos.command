@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV=".venv-build"
+VERSION="${MEDMASK_VERSION:-1.0.0}"
 
 "$PYTHON_BIN" -m venv "$BUILD_ENV"
 "$BUILD_ENV/bin/python" -m pip install --upgrade pip
@@ -16,6 +17,9 @@ BUILD_ENV=".venv-build"
   --name MedMask \
   --osx-bundle-identifier ru.medmask.local \
   main.py
+
+plutil -replace CFBundleShortVersionString -string "$VERSION" dist/MedMask.app/Contents/Info.plist
+codesign --force --deep --sign - dist/MedMask.app
 
 echo
 echo "Готово: dist/MedMask.app"

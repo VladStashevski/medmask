@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "medmask"
+version = "1.0.0"
+description = "Локальное обезличивание медицинских документов"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "chardet>=5.2,<6",
+  "docx2txt>=0.9,<1",
+  "openpyxl>=3.1,<4",
+  "PyMuPDF>=1.25,<2",
+  "striprtf>=0.0.29,<1",
+  "tqdm>=4.67,<5",
+]
+
+[project.optional-dependencies]
+build = [
+  "pyinstaller>=6.12,<7",
+  "pytest>=8.3,<9",
+]
+
+[project.scripts]
+medmask = "medmask.app:main"
+
+[tool.setuptools]
+packages = ["medmask"]

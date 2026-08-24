@@ -211,7 +211,7 @@ def _process_file(
             notify("Обезличивание текста", 0.20)
             page_texts, page_rects = engine.build_pages_from_text(
                 raw_text,
-                source_name=path.name,
+                source_name=str(path),
             )
             notify("Текст обезличен", 0.62)
 

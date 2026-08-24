@@ -182,6 +182,140 @@ def test_name_split_by_line_break_is_masked(source: str) -> None:
     assert "[FIO]" in cleaned
 
 
+def test_ocr_header_name_and_short_birth_date_are_masked() -> None:
+    source = "САВВА НИКОЛАЙ ВАСИЛЬЕВИ 03.10.41 / 64 ГОДА"
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "САВВА" not in cleaned
+    assert "НИКОЛАЙ" not in cleaned
+    assert "03.10.41" not in cleaned
+    assert "64 ГОДА" in cleaned
+    assert "[FIO]" in cleaned
+
+
+def test_short_birth_date_after_fio_period_is_masked() -> None:
+    memory = batch.engine.PIIMemory()
+    cleaned = memory.sweep_fio("[FIO]. 03.10.41 год")
+
+    assert "03.10.41" not in cleaned
+    assert "[AGE]" in cleaned
+
+
+def test_patient_name_from_parent_folder_masks_ocr_truncated_name() -> None:
+    memory = batch.engine.PIIMemory()
+    memory.seed_from_source_path("/tmp/11128-2026_ИВАНОВА_АИ/скан.pdf")
+
+    cleaned = batch.engine.depersonalize(
+        "ИВАНОВА АЛЬМИРА РИФОВ-",
+        mem=memory,
+    )
+
+    assert "ИВАНОВА" not in cleaned
+    assert "АЛЬМИРА" not in cleaned
+    assert "РИФОВ" not in cleaned
+    assert "[FIO]" in cleaned
+
+
+def test_lab_table_row_is_not_mistaken_for_medical_record_number() -> None:
+    source = "\n".join(
+        [
+            "Иммунологические исследования",
+            "№ Наименование Результат Ед. изм Норма",
+            "1 Антитела к HIV 1 и 2 и HIV1 p24, обнаружение в сыворотке крови Отрицательно лот 8322 от 19.06.2026",
+        ]
+    )
+
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "Антитела к HIV" in cleaned
+    assert "Отрицательно" in cleaned
+    assert "№ [MEDICAL_RECORD]" not in cleaned
+
+
+def test_lab_comment_is_not_mistaken_for_name_or_address() -> None:
+    source = "\n".join(
+        [
+            "Наименование Результат Ед. изм. Норма",
+            "Антитела к HIV 1 и 2 Отрицательно",
+            "Комментарий: КОМБИ БЕСТ ВИЧ ИФА с.2025г. до 16.12.2026г.",
+        ]
+    )
+
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "КОМБИ БЕСТ ВИЧ" in cleaned
+    assert "[FIO]" not in cleaned
+    assert "[ADDRESS]" not in cleaned
+
+
+def test_lab_acronym_is_not_reported_as_residual_fio(tmp_path: Path) -> None:
+    output = tmp_path / "lab.pdf"
+    text = "Комментарий: КОМБИ БЕСТ ВИЧ ИФА"
+    document = batch.engine.render_text_pdf(
+        [text],
+        [batch.engine.fitz.Rect(0, 0, *batch.engine.A4_RECT_WH)],
+    )
+    assert document is not None
+    document.save(output)
+    document.close()
+
+    findings = batch.engine.audit_pdf(str(output))
+
+    assert not any(kind.startswith("ФИО") for kind, _ in findings)
+
+
+def test_composite_sex_age_birth_date_keeps_age_only() -> None:
+    cleaned = batch.engine.depersonalize(
+        "Пол/возраст: Женский/68/05.08.1957"
+    )
+
+    assert "05.08.1957" not in cleaned
+    assert "68 лет" in cleaned
+
+
+def test_generic_identifier_is_masked() -> None:
+    cleaned = batch.engine.depersonalize("Идентификатор: 260500151276")
+
+    assert "260500151276" not in cleaned
+    assert "[IDENTIFIER]" in cleaned
+
+
+def test_ocr_spaced_phone_is_masked() -> None:
+    cleaned = batch.engine.depersonalize("A +9 998 300 1500")
+
+    assert "998 300 1500" not in cleaned
+    assert "[PHONE]" in cleaned
+
+
+def test_year_followed_by_new_sentence_is_not_birth_year() -> None:
+    source = "Дата поступления 06.02.2026г. Расчет нутритивной потребности"
+
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "2026г. Расчет" in cleaned
+    assert "лет" not in cleaned
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "пациент способен выполнить свои обычные обязанности",
+        "Ф.И.О. полностью",
+    ],
+)
+def test_fio_audit_does_not_mask_form_labels_or_clinical_sentence(source: str) -> None:
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "[FIO]" not in cleaned
+    assert cleaned == source
+
+
+def test_empty_fio_form_label_is_not_reported_as_name() -> None:
+    cleaned = batch.engine.depersonalize("ФИО больного")
+
+    assert not batch.engine.ocr_fio_label_re.search(cleaned)
+
+
 @pytest.mark.parametrize(
     ("source", "tag"),
     [

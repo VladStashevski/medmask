@@ -8,9 +8,10 @@
   4) рендерим СВЕЖИЙ PDF из чистого текста.
 
 Полная пересборка из текста — самая надёжная защита: в выходной PDF не попадают
-исходные метаданные, аннотации, формы, скрытый/белый текст, картинки (которые могут
-содержать ФИО/печати/подписи). Страницы без извлекаемого текста (сканы) помечаются
-заглушкой и попадают в отчёт _ОТЧЁТ_audit.txt для ручной проверки.
+исходные метаданные, аннотации, формы, скрытый/белый текст и исходные картинки.
+Сканы и отдельные изображения сначала распознаются встроенным локальным OCR,
+затем проходят через тот же движок обезличивания и только после этого попадают
+в новый текстовый PDF.
 
 Не-PDF форматы (docx/rtf/odt/odg/xlsx/txt) читаются и тоже сохраняются как обезличенный PDF.
 """
@@ -23,11 +24,14 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, date
 import hashlib
 import unicodedata
+from pathlib import Path
 
 import chardet
 import docx2txt
 from striprtf.striprtf import rtf_to_text
 from tqdm import tqdm
+
+from . import ocr as local_ocr
 
 try:
     import pymupdf as fitz
@@ -45,6 +49,7 @@ except ImportError:
 
 INPUT_DIR = "Карты"
 OUTPUT_DIR = "Карты_clean"
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 
 
 # ==================== ЧТЕНИЕ ФАЙЛОВ ====================
@@ -311,6 +316,9 @@ passport_number_inline_in_context_re = re.compile(
 
 # ---------- Карта ----------
 card_no_label_only_re = re.compile(r"(?i)^\s*(?:№|номер)\s*карты\b\s*[:\-]?\s*$")
+record_line_start_re = re.compile(
+    r"(?i)^\s*(?:№(?=\s|:|\-|\d|$)|no\.?(?=\s|:|\-|\d|$)|номер\b)"
+)
 card_label_inline_re = re.compile(
     r"(?i)(?:\bмедицинск\w*\s+карт\w*[^\n]*?(?:№|номер)|(?:№|номер)[^\n]*?\bмедицинск\w*\s+карт\w*)"
 )
@@ -325,6 +333,24 @@ medical_record_inline_re = re.compile(
     r"(?=[A-ZА-ЯЁ0-9/._\-]*\d)"
     r"[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9/._\-]{2,}"
 )
+medical_record_header_re = re.compile(
+    r"(?i)("
+    r"\bмедицинск\w*\s+карт\w*"
+    r"(?:(?!\n|\r).){0,140}?"
+    r"(?:№|номер)\s*[:\-]?\s*"
+    r")"
+    r"((?=[A-ZА-ЯЁ0-9/._\-]*\d)[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9/._\-]{2,})"
+)
+
+# Серийный номер сертификата электронной подписи идентифицирует сотрудника так
+# же, как ФИО. В выгрузках он обычно выглядит как длинная hex-строка с пробелами.
+certificate_label_re = re.compile(
+    r"(?i)("
+    r"\bсертификат(?:\s+(?:ключа|электронн\w+\s+подпис\w*))?"
+    r"|\bсерийн\w*\s+номер\s+сертификат\w*"
+    r")\s*[:№\-]?\s*"
+)
+certificate_value_re = re.compile(r"^[0-9A-FА-Фа-ф][0-9A-FА-Фа-ф\s:\-]{14,}")
 
 # Слова, после которых «Номер X» — НЕ номер карты пациента.
 _NOT_CARD_NUMBER_LABELS_RE = re.compile(
@@ -380,6 +406,7 @@ position_inline_re = re.compile(r"(?i)^(\s*(?:\d+\s*[.)]\s*)?должность\
 
 # ---------- ДР/возраст ----------
 dob_tag_re = re.compile(r"^\s*(?:\d+\s*[.)]\s*)?дата\s*рождения\b\s*[:\-]?\s*$", re.IGNORECASE)
+dob_any_label_re = re.compile(r"(?i)дата\s+рождени\w*")
 dob_age_tag_re = re.compile(r"^\s*(?:\d+\s*[.)]\s*)?дата\s*рождения\s*,\s*возраст\b\s*[:\-]?\s*$", re.IGNORECASE)
 age_tag_re = re.compile(r"^\s*(?:\d+\s*[.)]\s*)?(?:возраст|лет)\b\s*[:\-]?\s*$", re.IGNORECASE)
 age_label_inline_re = re.compile(r"(?i)^(\s*(?:\d+\s*[.)]\s*)?возраст\s*[:\-]\s*)(.+)$")
@@ -407,6 +434,26 @@ _QUOTED_DAY_RE = re.compile(
 
 def normalize_quoted_dates(text: str) -> str:
     return _QUOTED_DAY_RE.sub(r"\1 ", text)
+
+
+def _date_parts(value: str) -> tuple[int, int, int] | None:
+    numeric = flex_date_re.search(value)
+    if numeric:
+        day, month, year = map(int, numeric.groups())
+    else:
+        word = month_word_date_re.search(value)
+        if not word:
+            return None
+        day = int(word.group(1))
+        month = MONTH_MAP.get(word.group(2).lower(), 0)
+        year = int(word.group(3))
+    try:
+        date(year, month, day)
+    except ValueError:
+        return None
+    if year < 1870 or year > date.today().year:
+        return None
+    return day, month, year
 
 
 dob_label_inline_re = re.compile(r"(?i)(\bдата\s*рождения\b\s*[:\-]?\s*)(.*)$")
@@ -620,6 +667,21 @@ patient_label_fio_inline_re = re.compile(
     rf"({_PNAME_TOKEN_SAFE}(?:{_PNAME_SEP}{_PNAME_TOKEN_SAFE}){{0,2}})"
 )
 
+# OCR часто теряет двоеточие и регистр: «Имя иванова Возраст: 67». Это поле
+# всё равно однозначно содержит идентификатор, поэтому допускаем строчные буквы
+# и останавливаем значение перед меткой следующего поля.
+_OCR_FIO_STOP_LABEL = (
+    r"(?:возраст|пол|дата|время|номер|№|телефон|адрес|диагноз|отделение|"
+    r"полис|снилс|паспорт|рост|вес)"
+)
+ocr_fio_label_re = re.compile(
+    rf"(?i)(\b(?:фио|ф\.?\s*и\.?\s*о\.?|имя(?:\s+пациент\w*)?|"
+    rf"фамилия(?:\s+пациент\w*)?|пациент)\s*[:\-]?\s*)"
+    rf"([а-яё]{{3,}}(?:-[а-яё]{{2,}})?"
+    rf"(?:\s+[а-яё]{{3,}}(?:-[а-яё]{{2,}})?){{0,2}}?)"
+    rf"(?=\s+{_OCR_FIO_STOP_LABEL}\b|\s*$)"
+)
+
 
 # ==================== БЛОКИ РЕЗУЛЬТАТОВ ИССЛЕДОВАНИЙ ====================
 # В табличных бланках лабораторных результатов есть колонка «Комментарий
@@ -709,6 +771,17 @@ PATRONYMIC_STRONG = (
     r"[А-ЯЁ][а-яёА-ЯЁ]+(?:ович|евич|иевич|ьевич|овна|евна|иевна|ьевна|инична|оглы|кызы)"
 )
 fio_line_single_patronymic_re = re.compile(rf"^\s*{PATRONYMIC_STRONG}\s*$")
+
+_CROSSLINE_NAME_WORD = rf"(?:{RUS_WORD}|{UPPER_RUS_WORD})"
+_CROSSLINE_PATRONYMIC = rf"(?:{PATRONYMIC}|{UPPER_PATRONYMIC})"
+fio_crossline_after_surname_re = re.compile(
+    rf"\b{_CROSSLINE_NAME_WORD}[ \t]*\n[ \t]*"
+    rf"{_CROSSLINE_NAME_WORD}[ \t]+{_CROSSLINE_PATRONYMIC}\b"
+)
+fio_crossline_before_patronymic_re = re.compile(
+    rf"\b{_CROSSLINE_NAME_WORD}[ \t]+{_CROSSLINE_NAME_WORD}[ \t]*\n[ \t]*"
+    rf"{_CROSSLINE_PATRONYMIC}\b"
+)
 
 # ---------- Организации / гео / клинический контекст ----------
 ORG_GEO_STOPWORDS = (
@@ -833,10 +906,12 @@ def _is_strong_name_token(tok: str) -> bool:
 
 
 class PIIMemory:
-    """Накопитель токенов ФИО пациента + финальное «подметание» по всему тексту."""
+    """Накопитель известных идентификаторов для финального прохода по документу."""
 
     def __init__(self):
         self.fio_tokens = set()
+        self.dob_values: set[tuple[int, int, int]] = set()
+        self.record_tokens: set[str] = set()
 
     def add_fio(self, value: str):
         if not value:
@@ -860,13 +935,28 @@ class PIIMemory:
             if _is_namelike(tok):
                 self.fio_tokens.add(tok.lower())
 
+    def seed_from_filename(self, filename: str) -> None:
+        """Запоминает только сильные именные токены из имени исходного файла."""
+        for raw in re.split(r"[^А-Яа-яЁё\-]+", filename):
+            token = raw.strip("-")
+            if _is_strong_name_token(token):
+                self.fio_tokens.add(token.lower())
+
+    def add_dob(self, value: str) -> None:
+        parts = _date_parts(value)
+        if parts is not None:
+            self.dob_values.add(parts)
+
+    def add_record(self, value: str) -> None:
+        token = value.strip(" \t\r\n:;,.()[]{}")
+        if len(token) >= 3 and any(ch.isdigit() for ch in token):
+            self.record_tokens.add(token)
+
     def sweep_fio(self, text: str) -> str:
         """Затирает оставшиеся вхождения запомненных токенов ФИО.
 
-        ВАЖНО: строки с явной ролью врача/медработника («Врач: Иванов И.И.»,
-        «Лечащий врач — Петров», «Подпись врача - рентгенолога») НЕ затираются.
-        Блоки результатов исследований тоже не затираются — там фамилия
-        относится к специалисту, подтвердившему анализ.
+        В строгом режиме маскируются и пациент, и сотрудники: ФИО врача,
+        медсестры или владельца электронной подписи тоже являются ПДн.
         """
         long_toks = sorted((t for t in self.fio_tokens if len(t) >= 6), key=len, reverse=True)
         short_toks = sorted((t for t in self.fio_tokens if 4 <= len(t) < 6), key=len, reverse=True)
@@ -880,24 +970,8 @@ class PIIMemory:
                 line = re.sub(rf"(?i)\b{esc}\b", "[FIO]", line)
             return line
 
-        src_lines = text.split("\n")
-        study_idx = mark_study_regions(src_lines)
-        result_lines = []
-        for idx, line in enumerate(src_lines):
-            if idx in study_idx or is_doctor_line(line):
-                result_lines.append(line)
-            else:
-                result_lines.append(_mask_line(line))
-        text = "\n".join(result_lines)
-
-        src_lines = text.split("\n")
-        study_idx = mark_study_regions(src_lines)
-
-        def _initials_sub_line(idx: int, line: str) -> str:
-            if idx in study_idx or is_doctor_line(line):
-                return line
-            return re.sub(r"\[FIO\]\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.", "[FIO]", line)
-        text = "\n".join(_initials_sub_line(i, l) for i, l in enumerate(src_lines))
+        text = "\n".join(_mask_line(line) for line in text.split("\n"))
+        text = re.sub(r"\[FIO\]\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.", "[FIO]", text)
 
         text = re.sub(r"\b[А-ЯЁ][а-яё]{1,3}-\[FIO\]", "[FIO]", text)
         text = "\n".join(
@@ -907,6 +981,35 @@ class PIIMemory:
             )
             for line in text.split("\n")
         )
+        return self.sweep_known_numbers(text)
+
+    def sweep_known_numbers(self, text: str) -> str:
+        """Удаляет все повторы уже найденных ДР и номеров медкарты."""
+        for day, month, year in sorted(self.dob_values):
+            numeric = re.compile(
+                rf"(?<!\d)0?{day}\s*[.\-/]\s*0?{month}\s*[.\-/]\s*{year}(?!\d)"
+            )
+            replacement = age_phrase(
+                calc_age_from_str(f"{day:02d}.{month:02d}.{year:04d}")
+            )
+            text = numeric.sub(replacement, text)
+
+            month_forms = [name for name, number in MONTH_MAP.items() if number == month]
+            if month_forms:
+                words = "|".join(sorted(map(re.escape, month_forms), key=len, reverse=True))
+                word_date = re.compile(
+                    rf"(?i)\b0?{day}\s+(?:{words})\s+{year}"
+                    rf"(?:\s*(?:г\.?|год[а]?))?\b"
+                )
+                text = word_date.sub(replacement, text)
+
+        for token in sorted(self.record_tokens, key=len, reverse=True):
+            text = re.sub(
+                rf"(?<![\w/._\-]){re.escape(token)}(?![\w/._\-])",
+                "[MEDICAL_RECORD]",
+                text,
+                flags=re.IGNORECASE,
+            )
         return text
 
 
@@ -921,6 +1024,16 @@ def _remember_fio(value: str):
 def _remember_fio_strict(value: str):
     if _MEM is not None and value:
         _MEM.add_fio_strict(value)
+
+
+def _remember_dob(value: str):
+    if _MEM is not None and value:
+        _MEM.add_dob(value)
+
+
+def _remember_record(value: str):
+    if _MEM is not None and value:
+        _MEM.add_record(value)
 
 
 def _mask_fio_unless_org(rx: re.Pattern, s: str) -> str:
@@ -1098,6 +1211,12 @@ def is_header_block_above(lines, idx, window=10) -> bool:
     )
 
 
+def has_medical_card_header_above(lines, idx, window: int = 6) -> bool:
+    start = max(0, idx - window)
+    block = letters_only(" ".join(norm(lines[k]) for k in range(start, idx)))
+    return "медицинскаякарт" in block
+
+
 def has_passport_context(lines, idx, window=1) -> bool:
     for k in range(max(0, idx - window), min(len(lines), idx + window + 1)):
         if passport_context_line_re.search(_normline(lines[k])):
@@ -1107,7 +1226,7 @@ def has_passport_context(lines, idx, window=1) -> bool:
 
 def is_card_number_line(line: str) -> bool:
     """Строка выглядит как номер карты; исключаем телефоны и служебные номера."""
-    if not re.match(r"(?i)^\s*(?:№|no\.?|номер)\b", line):
+    if not record_line_start_re.match(line):
         return False
     if _NOT_CARD_NUMBER_LABELS_RE.match(line):
         return False
@@ -1339,6 +1458,38 @@ def _mask_dob_next_to_fio(s: str, force: bool = False) -> str:
     return _fio_dob_inline_re.sub(repl, s)
 
 
+def _remember_contextual_identifiers(text: str) -> None:
+    """Собирает известные ДР и номера карт до замены исходного текста.
+
+    В табличных выгрузках одно и то же значение часто повторяется без метки на
+    десятках страниц. После нахождения хотя бы одного подписанного поля все
+    точные повторы удаляются финальным проходом по документу.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        label = dob_any_label_re.search(line)
+        if label:
+            probe = "\n".join([line[label.end():], *lines[index + 1:index + 5]])[:500]
+            numeric = flex_date_re.search(probe)
+            word = month_word_date_re.search(probe)
+            match = numeric or word
+            if match:
+                _remember_dob(match.group(0))
+
+        if index + 1 < len(lines) and dob_any_label_re.search(lines[index + 1]):
+            numeric = flex_date_re.search(line)
+            word = month_word_date_re.search(line)
+            match = numeric or word
+            if match:
+                _remember_dob(match.group(0))
+
+    for match in medical_record_header_re.finditer(text):
+        _remember_record(match.group(2))
+    for match in medical_record_inline_re.finditer(text):
+        prefix = (match.group(1) or "") + (match.group(2) or "")
+        _remember_record(match.group(0)[len(prefix):])
+
+
 # ==================== ОЧИСТКА ОДНОЙ СТРОКИ ====================
 
 def _patient_label_fio_sub(m: re.Match) -> str:
@@ -1370,8 +1521,13 @@ def clean_line_single(
     # «Пациент: …», «Больной: …», «Представитель: …» — метка прямо называет
     # субъекта ПДн, поэтому ФИО затирается независимо от прочего контекста
     # строки (в ней может стоять номер ИБ с названием отделения и т.п.).
-    if not study_ctx:
-        s = patient_label_fio_inline_re.sub(_patient_label_fio_sub, s)
+    s = patient_label_fio_inline_re.sub(_patient_label_fio_sub, s)
+
+    def _ocr_fio_sub(match: re.Match) -> str:
+        _remember_fio_strict(match.group(2))
+        return match.group(1) + "[FIO]"
+
+    s = ocr_fio_label_re.sub(_ocr_fio_sub, s)
 
     if not doctor_ctx and not clinical_ctx and not study_ctx:
         if fio_line_triplet_re.match(s) or fio_line_doublet_re.match(s) or fio_line_initials_re.match(s):
@@ -1515,6 +1671,7 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
     _MEM = mem if mem is not None else PIIMemory()
 
     text = normalize_quoted_dates(norm(text))
+    _remember_contextual_identifiers(text)
     lines = text.splitlines(keepends=True)
     study_idx = mark_study_regions(lines)
     out = []
@@ -1555,15 +1712,25 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
             i += 1
             continue
 
+        header_record = medical_record_header_re.search(line)
+        if header_record:
+            _remember_record(header_record.group(2))
+            out.append(medical_record_header_re.sub(r"\1[MEDICAL_RECORD]", line))
+            i += 1
+            continue
+
         if is_card_number_line(stripped) or (
-            is_header_block_above(lines, i)
-            and re.match(r"(?i)^\s*(?:№|no\.?|номер)\b", stripped)
+            (is_header_block_above(lines, i) or has_medical_card_header_above(lines, i))
+            and record_line_start_re.match(stripped)
         ):
             end = _line_ending(line)
             core = line[:-len(end)] if end else line
             masked = medical_record_inline_re.sub(r"\1\2[MEDICAL_RECORD]", core)
             if masked == core:
-                label = re.match(r"(?i)^(\s*(?:№|no\.?|номер)\b\s*[:\-]?\s*)", core)
+                label = re.match(
+                    r"(?i)^(\s*(?:№(?=\s|:|\-|\d|$)|no\.?(?=\s|:|\-|\d|$)|номер\b)\s*[:\-]?\s*)",
+                    core,
+                )
                 masked = (label.group(1) if label else "") + "[MEDICAL_RECORD]"
             out.append(masked + end)
             i += 1
@@ -1629,29 +1796,23 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
             i = nxt_i
             continue
 
-        if fio_tag_only_re.match(stripped) and not study_ctx:
+        if fio_tag_only_re.match(stripped):
             out.append(line)
             nxt_i, val, end = _consume_value_line(i + 1)
-            if doctor_ctx_below:
-                out.append((val or "") + end)
-            else:
-                _remember_fio_strict(val)
-                out.append("[FIO]" + end)
+            _remember_fio_strict(val)
+            out.append("[FIO]" + end)
             i = nxt_i
             continue
 
-        if not study_ctx and (
+        if (
             surname_label_only_re.match(stripped)
             or firstname_label_only_re.match(stripped)
             or patronymic_label_only_re.match(stripped)
         ):
             out.append(line)
             nxt_i, val, end = _consume_value_line(i + 1)
-            if doctor_ctx_below:
-                out.append((val or "") + end)
-            else:
-                _remember_fio_strict(val)
-                out.append("[FIO]" + end)
+            _remember_fio_strict(val)
+            out.append("[FIO]" + end)
             i = nxt_i
             continue
 
@@ -1776,9 +1937,9 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
 
     text2 = extra_safety_pass(text2)
 
+    text2 = strict_privacy_pass(text2)
     if sweep:
         text2 = _MEM.sweep_fio(text2)
-    text2 = strict_privacy_pass(text2)
     _MEM = None
 
     return sanitize_for_windows(text2)
@@ -1983,27 +2144,58 @@ def extra_safety_pass(text: str) -> str:
     return text
 
 
-_STAFF_LABEL_VALUE_RE = re.compile(
-    r"(?i)("
-    r"\b(?:фио\s+)?(?:лечащ\w+\s+)?"
+_STAFF_ROLE_BODY = (
     r"(?:врач\w*|доктор\w*|медсестр\w*|медбрат\w*|фельдшер\w*|акушер\w*|"
-    r"заведующ\w*|ординатор\w*|лаборант\w*|рентгенолог\w*|реаниматолог\w*)"
-    r"\b\s*[:\-]\s*"
-    r")"
-    r"((?:[А-ЯЁ][а-яё]+|[А-ЯЁ]\.)"
-    r"(?:\s+(?:[А-ЯЁ][а-яё]+|[А-ЯЁ]\.)){0,2})"
+    r"заведующ\w*|ординатор\w*|лаборант\w*|рентгенолог\w*|реаниматолог\w*|"
+    r"исполнител\w*|владелец|подписант\w*|сотрудник\w*|специалист\w*|"
+    r"оператор\w*|подтвердил\w*|проверил\w*|выполнил\w*|составил\w*|"
+    r"согласовал\w*|ответственн\w+\s+лиц\w*)"
 )
+_STAFF_NAME_TOKEN = r"(?:[А-ЯЁ][а-яё]+|[А-ЯЁ]{2,}|[А-ЯЁ]\.)"
+_STAFF_LABEL_VALUE_RE = re.compile(
+    rf"(?i)(\b(?:фио\s+)?(?:лечащ\w+\s+)?{_STAFF_ROLE_BODY}"
+    rf"\b\s*[:\-]\s*)"
+    rf"({_STAFF_NAME_TOKEN}(?:\s+{_STAFF_NAME_TOKEN}){{0,2}})"
+)
+_STAFF_LABEL_ONLY_RE = re.compile(
+    rf"(?i)^\s*(?:фио\s+)?(?:лечащ\w+\s+)?{_STAFF_ROLE_BODY}\s*[:\-]?\s*$"
+)
+_STAFF_CONTEXT_RE = re.compile(rf"(?i)\b{_STAFF_ROLE_BODY}\b")
+
+
+def _mask_certificate_in_line(core: str) -> tuple[str, bool]:
+    """Маскирует номер сертификата; bool означает значение на следующей строке."""
+    match = certificate_label_re.search(core)
+    if not match:
+        return core, False
+    tail = core[match.end():]
+    value = certificate_value_re.match(tail)
+    if value and sum(ch.isalnum() for ch in value.group(0)) >= 16:
+        core = core[:match.end()] + "[CERTIFICATE]" + tail[value.end():]
+        return core, False
+    return core, not tail.strip()
 
 
 def strict_privacy_pass(text: str) -> str:
     """Финальный строгий проход: номера историй и ФИО сотрудников тоже ПДн."""
     output = []
     staff_value_expected = False
+    certificate_value_expected = False
+    source_lines = text.splitlines(keepends=True)
 
-    for line in text.splitlines(keepends=True):
+    for index, line in enumerate(source_lines):
         ending = _line_ending(line)
         core = line[:-len(ending)] if ending else line
         stripped = core.strip()
+
+        if certificate_value_expected and stripped:
+            value = certificate_value_re.match(stripped)
+            if value and sum(ch.isalnum() for ch in value.group(0)) >= 16:
+                leading = re.match(r"^\s*", core).group(0)
+                output.append(leading + "[CERTIFICATE]" + ending)
+                certificate_value_expected = False
+                continue
+            certificate_value_expected = False
 
         if staff_value_expected and stripped:
             if (
@@ -2013,25 +2205,65 @@ def strict_privacy_pass(text: str) -> str:
                 or fio_upper_triplet_line_re.match(stripped)
                 or fio_upper_with_initials_line_re.match(stripped)
             ):
+                _remember_fio_strict(stripped)
                 leading = re.match(r"^\s*", core).group(0)
                 output.append(leading + "[FIO]" + ending)
                 staff_value_expected = False
                 continue
             staff_value_expected = False
 
-        core = medical_record_inline_re.sub(r"\1\2[MEDICAL_RECORD]", core)
-        core = _STAFF_LABEL_VALUE_RE.sub(r"\1[FIO]", core)
-        core = fio_triplet_inline_re.sub("[FIO]", core)
-        core = fio_with_initials_inline_re.sub("[FIO]", core)
-        core = fio_upper_triplet_inline_re.sub("[FIO]", core)
-        core = fio_upper_with_initials_inline_re.sub("[FIO]", core)
-        core = fio_initials_upper_inline_re.sub("[FIO]", core)
+        def _header_record_sub(match: re.Match) -> str:
+            _remember_record(match.group(2))
+            return match.group(1) + "[MEDICAL_RECORD]"
+
+        def _inline_record_sub(match: re.Match) -> str:
+            prefix = (match.group(1) or "") + (match.group(2) or "")
+            _remember_record(match.group(0)[len(prefix):])
+            return prefix + "[MEDICAL_RECORD]"
+
+        def _staff_sub(match: re.Match) -> str:
+            _remember_fio_strict(match.group(2))
+            return match.group(1) + "[FIO]"
+
+        def _fio_sub(match: re.Match) -> str:
+            _remember_fio_strict(match.group(0))
+            return "[FIO]"
+
+        core = medical_record_header_re.sub(_header_record_sub, core)
+        core = medical_record_inline_re.sub(_inline_record_sub, core)
+        core = _STAFF_LABEL_VALUE_RE.sub(_staff_sub, core)
+        core, expects_certificate = _mask_certificate_in_line(core)
+        core = fio_triplet_inline_re.sub(_fio_sub, core)
+        core = fio_with_initials_inline_re.sub(_fio_sub, core)
+        core = fio_upper_triplet_inline_re.sub(_fio_sub, core)
+        core = fio_upper_with_initials_inline_re.sub(_fio_sub, core)
+        core = fio_initials_upper_inline_re.sub(_fio_sub, core)
         core = _mask_fio_by_dictionary(core)
 
-        output.append(core + ending)
-        staff_value_expected = bool(doctor_label_only_re.fullmatch(stripped))
+        # Имя бывает строкой перед ролью в подписи или списке сотрудников.
+        if stripped and _is_strong_name_token(stripped):
+            for next_line in source_lines[index + 1:index + 4]:
+                next_stripped = _normline(next_line)
+                if not next_stripped:
+                    continue
+                if _STAFF_CONTEXT_RE.search(next_stripped):
+                    _remember_fio_strict(stripped)
+                    core = re.match(r"^\s*", core).group(0) + "[FIO]"
+                break
 
-    return "".join(output)
+        output.append(core + ending)
+        staff_value_expected = bool(_STAFF_LABEL_ONLY_RE.fullmatch(stripped))
+        certificate_value_expected = expects_certificate
+
+    result = "".join(output)
+
+    def _crossline_sub(match: re.Match) -> str:
+        _remember_fio_strict(match.group(0))
+        return "[FIO]\n"
+
+    result = fio_crossline_after_surname_re.sub(_crossline_sub, result)
+    result = fio_crossline_before_patronymic_re.sub(_crossline_sub, result)
+    return result
 
 
 # ==================== ФОРМАТТЕР: СБОРКА PDF ИЗ ТЕКСТА ====================
@@ -2312,15 +2544,45 @@ def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0, on_progre
 
 # ==================== PDF: ИЗВЛЕЧЕНИЕ + ДЕТЕКТ СКАНОВ ====================
 
-SCAN_PLACEHOLDER = "[СКАН/ИЗОБРАЖЕНИЕ: текст не извлечён — ТРЕБУЕТСЯ РУЧНАЯ ПРОВЕРКА]"
+SCAN_PLACEHOLDER = "[OCR НЕ РАСПОЗНАЛ ТЕКСТ — ТРЕБУЕТСЯ ПРОВЕРКА]"
 A4_RECT_WH = (595.0, 842.0)
+OCR_DPI = 180
+
+
+def _page_image_coverage(page) -> float:
+    page_area = max(1.0, page.rect.width * page.rect.height)
+    covered = 0.0
+    seen = set()
+    for image in page.get_images(full=True):
+        xref = image[0]
+        if xref in seen:
+            continue
+        seen.add(xref)
+        try:
+            covered += sum(rect.width * rect.height for rect in page.get_image_rects(xref))
+        except Exception:
+            continue
+    return min(1.0, covered / page_area)
+
+
+def _needs_ocr(page, raw_text: str, has_images: bool) -> bool:
+    visible = raw_text.strip()
+    if not visible:
+        return has_images
+    return has_images and len(visible) < 500 and _page_image_coverage(page) >= 0.35
+
+
+def _ocr_page(page):
+    pixmap = page.get_pixmap(dpi=OCR_DPI, colorspace=fitz.csRGB, alpha=False)
+    return local_ocr.recognize_pixmap(pixmap)
 
 
 def build_pages_from_pdf(path: str, on_progress=None):
     doc = fitz.open(path)
     page_texts, page_rects = [], []
-    scan_pages, image_pages = [], []
+    scan_pages, image_pages, ocr_pages, low_confidence_pages = [], [], [], []
     mem = PIIMemory()
+    mem.seed_from_filename(Path(path).stem)
     text_page_idx = []
     try:
         for idx, page in enumerate(doc, start=1):
@@ -2328,15 +2590,31 @@ def build_pages_from_pdf(path: str, on_progress=None):
             raw = page.get_text("text", sort=True)
             has_images = bool(page.get_images(full=True))
             page_rects.append(rect)
-            if raw.strip() == "":
-                page_texts.append(SCAN_PLACEHOLDER if has_images else "")
-                if has_images:
+            if has_images:
+                image_pages.append(idx)
+
+            if _needs_ocr(page, raw, has_images):
+                if on_progress:
+                    on_progress("ocr", idx, doc.page_count)
+                recognized = _ocr_page(page)
+                raw = recognized.text
+                if raw.strip():
+                    ocr_pages.append(idx)
+                    if recognized.low_confidence:
+                        low_confidence_pages.append(idx)
+                else:
                     scan_pages.append(idx)
+                    page_texts.append(SCAN_PLACEHOLDER)
+                    if on_progress:
+                        on_progress("anonymize", idx, doc.page_count)
+                    continue
+
+            if raw.strip() == "":
+                page_texts.append("")
                 if on_progress:
                     on_progress("anonymize", idx, doc.page_count)
                 continue
-            if has_images:
-                image_pages.append(idx)
+
             page_texts.append(depersonalize(reflow_text(raw), mem=mem, sweep=False))
             text_page_idx.append(len(page_texts) - 1)
             if on_progress:
@@ -2347,13 +2625,64 @@ def build_pages_from_pdf(path: str, on_progress=None):
             )
             if on_progress:
                 on_progress("finalize", position, len(text_page_idx))
-        return page_texts, page_rects, scan_pages, image_pages
+        return (
+            page_texts,
+            page_rects,
+            scan_pages,
+            image_pages,
+            ocr_pages,
+            low_confidence_pages,
+        )
     finally:
         doc.close()
 
 
-def build_pages_from_text(text: str):
-    cleaned = normalize_layout(depersonalize(text or ""))
+def build_pages_from_image(path: str, on_progress=None):
+    document = fitz.open(path)
+    page_texts, page_rects = [], []
+    scan_pages, ocr_pages, low_confidence_pages = [], [], []
+    text_page_idx = []
+    mem = PIIMemory()
+    mem.seed_from_filename(Path(path).stem)
+    try:
+        for index, page in enumerate(document, start=1):
+            if on_progress:
+                on_progress("ocr", index, document.page_count)
+            recognized = _ocr_page(page)
+            width, height = A4_RECT_WH
+            if page.rect.width > page.rect.height:
+                width, height = height, width
+            page_rects.append(fitz.Rect(0, 0, width, height))
+            if not recognized.text.strip():
+                page_texts.append(SCAN_PLACEHOLDER)
+                scan_pages.append(index)
+                continue
+            ocr_pages.append(index)
+            if recognized.low_confidence:
+                low_confidence_pages.append(index)
+            page_texts.append(
+                depersonalize(reflow_text(recognized.text), mem=mem, sweep=False)
+            )
+            text_page_idx.append(len(page_texts) - 1)
+            if on_progress:
+                on_progress("anonymize", index, document.page_count)
+
+        for position, page_index in enumerate(text_page_idx, start=1):
+            page_texts[page_index] = normalize_layout(
+                sanitize_for_windows(mem.sweep_fio(page_texts[page_index]))
+            )
+            if on_progress:
+                on_progress("finalize", position, len(text_page_idx))
+        return page_texts, page_rects, scan_pages, ocr_pages, low_confidence_pages
+    finally:
+        document.close()
+
+
+def build_pages_from_text(text: str, source_name: str = ""):
+    mem = PIIMemory()
+    if source_name:
+        mem.seed_from_filename(Path(source_name).stem)
+    cleaned = normalize_layout(depersonalize(text or "", mem=mem))
     rect = fitz.Rect(0, 0, *A4_RECT_WH)
     return [cleaned], [rect]
 
@@ -2382,16 +2711,35 @@ AUDIT_PATTERNS = (
     ("СНИЛС", snils_re),
     ("ИНН", inn_labeled_re),
     ("ПАСПОРТ", passport_num_re),
-    ("ЕНП/ПОЛИС-16", enp_re),
     ("МЕДКАРТА", medical_record_inline_re),
+    ("МЕДКАРТА-ЗАГОЛОВОК", medical_record_header_re),
     ("ФИО-ТРИПЛЕТ", fio_triplet_inline_re),
     ("ФИО-ИНИЦИАЛЫ", fio_with_initials_inline_re),
     ("ФИО-КАПС", fio_upper_triplet_inline_re),
+    ("ФИО-СОТРУДНИКА", _STAFF_LABEL_VALUE_RE),
+    ("ФИО-OCR", ocr_fio_label_re),
     ("ГОД-РОЖДЕНИЯ", year_birth_re),
     ("ЛИСТ-НЕТРУДОСП", sick_leave_labeled_re),
 )
-_NUMERIC_AUDIT_KINDS = {"ТЕЛЕФОН", "ТЕЛЕФОН-МЕЖД", "СНИЛС", "ЕНП/ПОЛИС-16"}
+_NUMERIC_AUDIT_KINDS = {"ТЕЛЕФОН", "ТЕЛЕФОН-МЕЖД", "СНИЛС"}
 _FIO_AUDIT_KINDS = {"ФИО-ТРИПЛЕТ", "ФИО-ИНИЦИАЛЫ", "ФИО-КАПС"}
+_DOB_RESIDUAL_RE = re.compile(
+    rf"(?i)дата\s+рождени\w*.{{0,100}}(?:{_ANY_DOB_ALT})"
+)
+
+
+def _valid_snils_match(match: re.Match) -> bool:
+    digits = re.sub(r"\D", "", match.group(0))
+    if len(digits) != 11:
+        return False
+    number = int(digits[:9])
+    if number <= 1_001_998:
+        return False
+    total = sum(int(digit) * weight for digit, weight in zip(digits[:9], range(9, 0, -1)))
+    checksum = total if total < 100 else 0 if total in (100, 101) else total % 101
+    if checksum == 100:
+        checksum = 0
+    return checksum == int(digits[9:])
 
 
 def audit_pdf(out_path: str, on_progress=None):
@@ -2411,21 +2759,34 @@ def audit_pdf(out_path: str, on_progress=None):
         doc.close()
 
     full = norm(full)
+    crossline = (
+        fio_crossline_after_surname_re.search(full)
+        or fio_crossline_before_patronymic_re.search(full)
+    )
+    if crossline:
+        findings.append(("ФИО-ПЕРЕНОС", crossline.group(0)[:160]))
     for line in full.splitlines():
         s = line.strip()
-        if not s or s.startswith("[СКАН"):
+        if not s or s.startswith(("[СКАН", "[OCR")):
             continue
         low = s.lower()
         if org_id_re.search(low):
             continue
         card_ctx = bool(card_context_inline_re.search(low)) or "карт" in low or "истори" in low
-        doctor_ctx = bool(DOCTOR_CONTEXT_RE.search(low))
+        certificate_masked, _ = _mask_certificate_in_line(s)
+        if certificate_masked != s:
+            findings.append(("СЕРТИФИКАТ", s[:160]))
+            continue
+        if _DOB_RESIDUAL_RE.search(s):
+            findings.append(("ДАТА-РОЖДЕНИЯ", s[:160]))
+            continue
         for kind, rx in AUDIT_PATTERNS:
             if card_ctx and kind in _NUMERIC_AUDIT_KINDS:
                 continue
-            if doctor_ctx and kind in _FIO_AUDIT_KINDS:
+            match = rx.search(s)
+            if kind == "СНИЛС" and match is not None and not _valid_snils_match(match):
                 continue
-            if rx.search(s):
+            if match:
                 findings.append((kind, s[:160]))
                 break
     return findings
@@ -2497,7 +2858,7 @@ def extract_history_number(base: str) -> str | None:
 
 # ==================== ОБРАБОТКА ФАЙЛОВ ====================
 
-SUPPORTED_EXT = set(READERS) | {".pdf"}
+SUPPORTED_EXT = set(READERS) | {".pdf"} | IMAGE_EXT
 
 
 def should_skip_filename(name: str) -> bool:
@@ -2527,12 +2888,32 @@ def process(path: str):
     report = {"name": name, "out": "-", "scan_pages": [], "image_pages": [], "findings": []}
     try:
         if ext == ".pdf":
-            page_texts, page_rects, scan_pages, image_pages = build_pages_from_pdf(path)
+            (
+                page_texts,
+                page_rects,
+                scan_pages,
+                image_pages,
+                ocr_pages,
+                low_confidence_pages,
+            ) = build_pages_from_pdf(path)
             report["scan_pages"] = scan_pages
             report["image_pages"] = image_pages
+            report["ocr_pages"] = ocr_pages
+            report["low_confidence_pages"] = low_confidence_pages
+        elif ext in IMAGE_EXT:
+            (
+                page_texts,
+                page_rects,
+                scan_pages,
+                ocr_pages,
+                low_confidence_pages,
+            ) = build_pages_from_image(path)
+            report["scan_pages"] = scan_pages
+            report["ocr_pages"] = ocr_pages
+            report["low_confidence_pages"] = low_confidence_pages
         else:
             raw = READERS[ext](path)
-            page_texts, page_rects = build_pages_from_text(raw)
+            page_texts, page_rects = build_pages_from_text(raw, source_name=name)
     except Exception as e:
         print(f"Ошибка при чтении {name}: {e}")
         report["error"] = str(e)

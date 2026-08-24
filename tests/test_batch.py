@@ -31,8 +31,8 @@ def test_discovery_is_recursive_and_does_not_include_hidden_files(tmp_path: Path
 
     files, skipped = batch.discover_files(tmp_path)
 
-    assert [path.name for path in files] == ["заметка.txt", "карта.PDF"]
-    assert skipped == {".jpg": 1}
+    assert [path.name for path in files] == ["заметка.txt", "карта.PDF", "снимок.jpg"]
+    assert skipped == {}
 
 
 def test_safe_report_contains_no_source_name_or_text_snippet(tmp_path: Path) -> None:
@@ -84,6 +84,35 @@ def test_medical_record_label_is_preserved() -> None:
 @pytest.mark.parametrize(
     "source",
     [
+        "МЕДИЦИНСКАЯ КАРТА пациента № 11128/2026",
+        "МЕДИЦИНСКАЯ КАРТА ПАЦИЕНТА,\n№ 1112/2026",
+    ],
+)
+def test_medical_record_in_header_is_masked(source: str) -> None:
+    cleaned = batch.engine.depersonalize(source)
+    assert "1112" not in cleaned
+    assert "[MEDICAL_RECORD]" in cleaned
+
+
+def test_known_dob_and_record_are_swept_from_repeated_table_values() -> None:
+    source = "\n".join(
+        [
+            "Дата рождения: 01.02.1980",
+            "Повтор значения 01.02.1980",
+            "Номер медицинской карты: 11128/2026",
+            "Повтор № 11128/2026",
+        ]
+    )
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "01.02.1980" not in cleaned
+    assert "11128/2026" not in cleaned
+    assert "[MEDICAL_RECORD]" in cleaned
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
         "Врач: Петров Пётр Сергеевич",
         "Лечащий врач: Петров П.П.",
         "Врач:\nПетров",
@@ -92,6 +121,64 @@ def test_medical_record_label_is_preserved() -> None:
 def test_staff_name_is_masked_in_strict_mode(source: str) -> None:
     cleaned = batch.engine.depersonalize(source)
     assert "Петров" not in cleaned
+    assert "[FIO]" in cleaned
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Исполнитель: Петров Пётр Сергеевич",
+        "Владелец:\nПетров Пётр Сергеевич",
+        "Комментарий подтвердил: Петров П.П.",
+    ],
+)
+def test_extended_staff_labels_are_masked(source: str) -> None:
+    cleaned = batch.engine.depersonalize(source)
+    assert "Петров" not in cleaned
+    assert "[FIO]" in cleaned
+
+
+def test_electronic_signature_certificate_is_masked() -> None:
+    source = "Сертификат: 26 0A30 3987 1FB3 39A1 70B0 394B 4BF6 8BE5"
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "0A30" not in cleaned
+    assert "[CERTIFICATE]" in cleaned
+
+
+def test_patient_name_is_masked_inside_laboratory_block() -> None:
+    source = "\n".join(
+        [
+            "Наименование Результат Ед. изм. Комментарий подтвердил",
+            "Фамилия, имя, отчество пациента: Иванов Иван Иванович",
+        ]
+    )
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "Иванов" not in cleaned
+    assert "[FIO]" in cleaned
+
+
+def test_ocr_name_without_colon_or_capitalization_is_masked() -> None:
+    source = "2026-04-12 05:44 Имя иванова Возраст: 67 Пол: женский"
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "иванова" not in cleaned.lower()
+    assert "[FIO]" in cleaned
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "ИВАНОВА\nМАРИЯ ПЕТРОВНА",
+        "Иванова Мария\nПетровна",
+    ],
+)
+def test_name_split_by_line_break_is_masked(source: str) -> None:
+    cleaned = batch.engine.depersonalize(source)
+
+    assert "Иванов" not in cleaned
+    assert "Петровн" not in cleaned
     assert "[FIO]" in cleaned
 
 
@@ -189,3 +276,41 @@ def test_pdf_progress_reports_pages(tmp_path: Path) -> None:
         "Страница 2 из 3",
         "Страница 3 из 3",
     ]
+
+
+def test_scanned_pdf_uses_ocr_and_reports_page(monkeypatch, tmp_path: Path) -> None:
+    source_dir = tmp_path / "Сканы"
+    source_dir.mkdir()
+    source_path = source_dir / "скан.pdf"
+    # Формируем PDF-скан, но само распознавание подменяем стабильным результатом.
+    with batch.engine.fitz.open() as document:
+        page = document.new_page()
+        pixmap = batch.engine.fitz.Pixmap(
+            batch.engine.fitz.csRGB,
+            batch.engine.fitz.IRect(0, 0, 20, 20),
+            False,
+        )
+        pixmap.clear_with(255)
+        page.insert_image(page.rect, pixmap=pixmap)
+        document.save(source_path)
+
+    recognized = batch.engine.local_ocr.OCRResult(
+        text="Пациент: Иванов Иван Иванович\nДиагноз: тест",
+        confidence=0.92,
+        line_count=2,
+    )
+    monkeypatch.setattr(batch.engine, "_ocr_page", lambda page: recognized)
+
+    result = batch.process_folder(source_dir)
+
+    assert result.successful == 1
+    assert result.files[0].ocr_pages == [1]
+    assert result.files[0].scan_pages == []
+    with batch.engine.fitz.open(result.files[0].output_path) as document:
+        output_text = "\n".join(page.get_text() for page in document)
+    assert "Иванов" not in output_text
+    assert "[FIO]" in output_text
+
+
+def test_ocr_assets_are_present_and_valid() -> None:
+    batch.engine.local_ocr.verify_assets()

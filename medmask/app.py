@@ -128,7 +128,7 @@ class MedMaskApp:
 
         self.folder_path = tk.Label(
             card,
-            text="PDF, DOCX, RTF, ODT, ODG, TXT, XLSX и XLSM",
+            text="PDF, изображения и офисные документы",
             bg=CARD,
             fg=MUTED,
             justify="left",
@@ -324,6 +324,8 @@ class MedMaskApp:
             f"Создано PDF: {result.successful}.",
             f"Результат: {result.output_dir}",
         ]
+        if result.recognized_with_ocr:
+            lines.append(f"OCR применён к документам: {result.recognized_with_ocr}.")
         if result.failed:
             lines.append(f"Не удалось обработать: {result.failed}.")
             errors = sorted({item.error for item in result.files if item.error})

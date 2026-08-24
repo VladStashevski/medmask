@@ -10,6 +10,8 @@ py -3 -m venv $BuildEnv
   --clean `
   --onefile `
   --windowed `
+  --additional-hooks-dir hooks `
+  --collect-data medmask `
   --name MedMask `
   main.py
 

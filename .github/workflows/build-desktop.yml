@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.name }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +45,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name MedMask main.py
+          pyinstaller --noconfirm --clean --onefile --windowed --additional-hooks-dir hooks --collect-data medmask --name MedMask main.py
           Move-Item dist\MedMask.exe dist\MedMask-Windows-x64.exe
 
       - name: Build macOS
@@ -53,7 +53,7 @@ jobs:
         env:
           MEDMASK_VERSION: ${{ github.ref_name }}
         run: |
-          pyinstaller --noconfirm --clean --windowed --name MedMask --osx-bundle-identifier ru.medmask.local main.py
+          pyinstaller --noconfirm --clean --windowed --additional-hooks-dir hooks --collect-data medmask --name MedMask --osx-bundle-identifier ru.medmask.local main.py
           version="${MEDMASK_VERSION#v}"
           plutil -replace CFBundleShortVersionString -string "$version" dist/MedMask.app/Contents/Info.plist
           codesign --force --deep --sign - dist/MedMask.app
@@ -84,4 +84,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "MedMask $GITHUB_REF_NAME" \
-            --notes "Автономный локальный инструмент. Python устанавливать не нужно. Документы никуда не отправляются. OCR для сканов и изображений пока не поддерживается."
+            --notes "Автономный локальный инструмент с офлайн-OCR для PDF-сканов и изображений. Python и интернет не требуются. Исходные документы не изменяются."

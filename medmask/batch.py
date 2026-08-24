@@ -46,6 +46,8 @@ class FileResult:
     output_path: Path | None = None
     scan_pages: list[int] = field(default_factory=list)
     image_pages: list[int] = field(default_factory=list)
+    ocr_pages: list[int] = field(default_factory=list)
+    low_confidence_pages: list[int] = field(default_factory=list)
     findings: list[tuple[str, str]] = field(default_factory=list)
     error: str | None = None
 
@@ -55,7 +57,13 @@ class FileResult:
 
     @property
     def needs_review(self) -> bool:
-        return bool(self.scan_pages or self.findings or self.error)
+        return bool(
+            self.scan_pages
+            or self.ocr_pages
+            or self.low_confidence_pages
+            or self.findings
+            or self.error
+        )
 
 
 @dataclass
@@ -77,6 +85,10 @@ class BatchResult:
     @property
     def needs_review(self) -> list[FileResult]:
         return [item for item in self.files if item.needs_review]
+
+    @property
+    def recognized_with_ocr(self) -> int:
+        return sum(bool(item.ocr_pages) for item in self.files)
 
 
 ProgressCallback = Callable[[Progress], None]
@@ -130,6 +142,8 @@ def _safe_error(error: Exception) -> str:
         return "файл недоступен"
     if isinstance(error, engine.zipfile.BadZipFile):
         return "повреждённый офисный документ"
+    if isinstance(error, engine.local_ocr.OCRError):
+        return str(error)
     message = str(error).lower()
     if "password" in message or "encrypted" in message:
         return "документ защищён паролем"
@@ -139,10 +153,11 @@ def _safe_error(error: Exception) -> str:
 
 
 _ENGINE_PHASES = {
-    "anonymize": ("Извлечение и обезличивание", 0.05, 0.47, "Страница"),
-    "finalize": ("Финальная обработка текста", 0.52, 0.10, "Страница"),
-    "render": ("Создание нового PDF", 0.65, 0.21, "Фрагмент"),
-    "audit": ("Проверка результата", 0.88, 0.10, "Страница"),
+    "ocr": ("Распознавание скана", 0.05, 0.48, "Страница"),
+    "anonymize": ("Извлечение и обезличивание", 0.05, 0.48, "Страница"),
+    "finalize": ("Финальная обработка текста", 0.54, 0.10, "Страница"),
+    "render": ("Создание нового PDF", 0.66, 0.21, "Фрагмент"),
+    "audit": ("Проверка результата", 0.89, 0.09, "Страница"),
 }
 
 
@@ -167,16 +182,37 @@ def _process_file(
     try:
         notify("Чтение документа", 0.02)
         if path.suffix.lower() == ".pdf":
-            page_texts, page_rects, scan_pages, image_pages = engine.build_pages_from_pdf(
-                str(path),
-                on_progress=engine_progress,
-            )
+            (
+                page_texts,
+                page_rects,
+                scan_pages,
+                image_pages,
+                ocr_pages,
+                low_confidence_pages,
+            ) = engine.build_pages_from_pdf(str(path), on_progress=engine_progress)
             result.scan_pages = scan_pages
             result.image_pages = image_pages
+            result.ocr_pages = ocr_pages
+            result.low_confidence_pages = low_confidence_pages
+        elif path.suffix.lower() in engine.IMAGE_EXT:
+            (
+                page_texts,
+                page_rects,
+                scan_pages,
+                ocr_pages,
+                low_confidence_pages,
+            ) = engine.build_pages_from_image(str(path), on_progress=engine_progress)
+            result.scan_pages = scan_pages
+            result.image_pages = list(range(1, len(page_texts) + 1))
+            result.ocr_pages = ocr_pages
+            result.low_confidence_pages = low_confidence_pages
         else:
             raw_text = engine.READERS[path.suffix.lower()](str(path))
             notify("Обезличивание текста", 0.20)
-            page_texts, page_rects = engine.build_pages_from_text(raw_text)
+            page_texts, page_rects = engine.build_pages_from_text(
+                raw_text,
+                source_name=path.name,
+            )
             notify("Текст обезличен", 0.62)
 
         notify("Создание нового PDF", 0.65)
@@ -210,11 +246,14 @@ def write_safe_report(
     """Пишет отчёт без исходных имён, путей и фрагментов медицинского текста."""
     successful = sum(item.output_path is not None for item in files)
     failed = sum(item.error is not None for item in files)
+    ocr_documents = sum(bool(item.ocr_pages) for item in files)
+    ocr_pages = sum(len(item.ocr_pages) for item in files)
     lines = [
         "ОТЧЁТ MEDMASK",
         f"Дата: {datetime.now():%Y-%m-%d %H:%M}",
         f"Найдено поддерживаемых документов: {len(files)}",
         f"Создано обезличенных PDF: {successful}",
+        f"OCR применён: документов {ocr_documents}, страниц {ocr_pages}",
         f"Ошибок: {failed}",
         "",
         "Исходные имена файлов и фрагменты документов намеренно не записываются.",
@@ -227,13 +266,24 @@ def write_safe_report(
             warnings.append(f"{item.code}: {item.error}.")
         if item.scan_pages:
             warnings.append(
-                f"{item.code}: страницы без извлекаемого текста "
-                f"({_format_numbers(item.scan_pages)}); содержимое сканов не перенесено."
+                f"{item.code}: OCR не распознал текст на страницах "
+                f"({_format_numbers(item.scan_pages)})."
             )
-        if item.image_pages:
+        if item.ocr_pages:
+            warnings.append(
+                f"{item.code}: OCR применён на страницах "
+                f"({_format_numbers(item.ocr_pages)}); результат нужно просмотреть."
+            )
+        if item.low_confidence_pages:
+            warnings.append(
+                f"{item.code}: низкая уверенность OCR на страницах "
+                f"({_format_numbers(item.low_confidence_pages)})."
+            )
+        removed_only = sorted(set(item.image_pages) - set(item.ocr_pages) - set(item.scan_pages))
+        if removed_only:
             warnings.append(
                 f"{item.code}: изображения удалены со страниц "
-                f"({_format_numbers(item.image_pages)})."
+                f"({_format_numbers(removed_only)})."
             )
         if item.findings:
             kinds = ", ".join(sorted({kind for kind, _ in item.findings}))
@@ -253,7 +303,6 @@ def write_safe_report(
         lines.extend(
             [
                 f"Неподдерживаемые файлы не обрабатывались: {skipped}.",
-                "Изображения JPG/PNG и сканы требуют отдельного OCR.",
                 "",
             ]
         )

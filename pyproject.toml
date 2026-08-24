@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "medmask"
-version = "1.0.1"
+version = "1.1.0"
 description = "Локальное обезличивание медицинских документов"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,9 @@ dependencies = [
   "chardet>=5.2,<6",
   "docx2txt>=0.9,<1",
   "openpyxl>=3.1,<4",
+  "onnxruntime>=1.28,<2",
   "PyMuPDF>=1.25,<2",
+  "rapidocr==3.9.2",
   "striprtf>=0.0.29,<1",
   "tqdm>=4.67,<5",
 ]
@@ -28,3 +30,6 @@ medmask = "medmask.app:main"
 
 [tool.setuptools]
 packages = ["medmask"]
+
+[tool.setuptools.package-data]
+medmask = ["assets/*.onnx"]

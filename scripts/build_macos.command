@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV=".venv-build"
-VERSION="${MEDMASK_VERSION:-1.0.0}"
+VERSION="${MEDMASK_VERSION:-1.1.0}"
 
 "$PYTHON_BIN" -m venv "$BUILD_ENV"
 "$BUILD_ENV/bin/python" -m pip install --upgrade pip
@@ -14,6 +14,8 @@ VERSION="${MEDMASK_VERSION:-1.0.0}"
   --noconfirm \
   --clean \
   --windowed \
+  --additional-hooks-dir hooks \
+  --collect-data medmask \
   --name MedMask \
   --osx-bundle-identifier ru.medmask.local \
   main.py

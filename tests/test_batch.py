@@ -147,3 +147,45 @@ def test_process_folder_creates_anonymized_pdf_and_keeps_source(tmp_path: Path) 
     ):
         assert secret not in output_text
     assert "Диагноз: тестовая запись" in output_text
+
+
+def test_progress_moves_during_a_single_document(tmp_path: Path) -> None:
+    source_dir = tmp_path / "Истории"
+    source_dir.mkdir()
+    (source_dir / "карта.txt").write_text(
+        "Пациент: Иванов Иван Иванович\nДиагноз: тест",
+        encoding="utf-8",
+    )
+    updates: list[batch.Progress] = []
+
+    batch.process_folder(source_dir, on_progress=updates.append)
+
+    assert updates
+    assert updates[0].percent > 0
+    assert any(update.stage == "Обезличивание текста" for update in updates)
+    assert any(update.stage == "Создание нового PDF" for update in updates)
+    assert any(update.stage == "Проверка результата" for update in updates)
+    assert [update.percent for update in updates] == sorted(update.percent for update in updates)
+
+
+def test_pdf_progress_reports_pages(tmp_path: Path) -> None:
+    source_dir = tmp_path / "PDF"
+    source_dir.mkdir()
+    source_path = source_dir / "карта.pdf"
+    with batch.engine.fitz.open() as document:
+        for number in range(1, 4):
+            page = document.new_page()
+            page.insert_text((72, 72), f"Patient record page {number}")
+        document.save(source_path)
+
+    updates: list[batch.Progress] = []
+    batch.process_folder(source_dir, on_progress=updates.append)
+
+    page_updates = [
+        update for update in updates if update.stage == "Извлечение и обезличивание"
+    ]
+    assert [update.detail for update in page_updates] == [
+        "Страница 1 из 3",
+        "Страница 2 из 3",
+        "Страница 3 из 3",
+    ]

@@ -7,6 +7,7 @@ import queue
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -35,15 +36,20 @@ def open_folder(path: Path) -> None:
 
 
 class MedMaskApp:
+    ACTIVITY_FRAMES = ("●··", "·●·", "··●", "·●·")
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.source_dir: Path | None = None
         self.output_dir: Path | None = None
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.processing = False
+        self.started_at: float | None = None
+        self.last_progress: Progress | None = None
 
         root.title("MedMask")
-        root.geometry("720x560")
-        root.minsize(620, 500)
+        root.geometry("720x520")
+        root.minsize(620, 480)
         root.configure(bg=BG)
 
         self._configure_styles()
@@ -156,17 +162,38 @@ class MedMaskApp:
             command=self._open_result,
         )
 
+        progress_info = tk.Frame(card, bg=CARD)
+        progress_info.pack(fill="x", pady=(28, 0))
+        self.progress_stage = tk.Label(
+            progress_info,
+            text="Ожидание",
+            bg=CARD,
+            fg=INK,
+            anchor="w",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        self.progress_stage.pack(side="left")
+        self.progress_time = tk.Label(
+            progress_info,
+            text="",
+            bg=CARD,
+            fg=MUTED,
+            anchor="e",
+            font=("TkDefaultFont", 10),
+        )
+        self.progress_time.pack(side="right")
+
         self.progress = ttk.Progressbar(
             card,
             mode="determinate",
             maximum=100,
             style="MedMask.Horizontal.TProgressbar",
         )
-        self.progress.pack(fill="x", pady=(28, 10))
+        self.progress.pack(fill="x", pady=(8, 12))
 
         self.status = tk.Label(
             card,
-            text="Исходные файлы не изменяются.",
+            text="",
             bg=CARD,
             fg=MUTED,
             justify="left",
@@ -175,23 +202,6 @@ class MedMaskApp:
             font=("TkDefaultFont", 10),
         )
         self.status.pack(fill="both", expand=True)
-
-        privacy = tk.Frame(outer, bg=BG)
-        privacy.pack(fill="x", pady=(16, 0))
-        tk.Label(
-            privacy,
-            text="●",
-            bg=BG,
-            fg=ACCENT,
-            font=("TkDefaultFont", 10),
-        ).pack(side="left")
-        tk.Label(
-            privacy,
-            text="Документы обрабатываются только на этом компьютере и никуда не отправляются.",
-            bg=BG,
-            fg=MUTED,
-            font=("TkDefaultFont", 9),
-        ).pack(side="left", padx=(7, 0))
 
     def _select_from_arguments(self) -> None:
         if len(sys.argv) > 1:
@@ -213,10 +223,9 @@ class MedMaskApp:
         self.output_dir = None
         self.folder_title.configure(text="Папка выбрана")
         self.folder_path.configure(text=str(self.source_dir))
-        self.status.configure(
-            text="Нажмите «Обезличить». Исходные файлы останутся без изменений.",
-            fg=MUTED,
-        )
+        self.status.configure(text="", fg=MUTED)
+        self.progress_stage.configure(text="Готово к запуску", fg=INK)
+        self.progress_time.configure(text="")
         self.progress.configure(value=0)
         self.run_button.configure(state="normal")
         self.open_button.pack_forget()
@@ -227,7 +236,13 @@ class MedMaskApp:
         self.choose_button.configure(state="disabled")
         self.run_button.configure(state="disabled")
         self.open_button.pack_forget()
-        self.progress.configure(value=0)
+        self.processing = True
+        self.started_at = time.monotonic()
+        self.last_progress = None
+        self.progress.configure(mode="indeterminate", value=0)
+        self.progress.start(12)
+        self.progress_stage.configure(text="Поиск документов", fg=INK)
+        self.progress_time.configure(text=f"{self.ACTIVITY_FRAMES[0]}  00:00")
         self.status.configure(text="Подготовка…", fg=MUTED)
         worker = threading.Thread(target=self._run_worker, args=(self.source_dir,), daemon=True)
         worker.start()
@@ -254,18 +269,51 @@ class MedMaskApp:
                     self._show_error(payload)  # type: ignore[arg-type]
         except queue.Empty:
             pass
+        self._refresh_elapsed()
         self.root.after(100, self._poll_events)
 
     def _show_progress(self, progress: Progress) -> None:
+        self.last_progress = progress
+        self.progress.stop()
+        self.progress.configure(mode="determinate")
         self.progress.configure(value=progress.percent)
+        self.progress_stage.configure(text=progress.stage, fg=INK)
+        file_number = min(progress.completed + 1, progress.total)
+        lines = [f"Файл {file_number} из {progress.total}: {progress.current_name}"]
+        if progress.detail:
+            lines.append(progress.detail)
         self.status.configure(
-            text=f"Обработано {progress.completed} из {progress.total}\n{progress.current_name}",
+            text="\n".join(lines),
             fg=MUTED,
         )
+        self._refresh_elapsed()
+
+    def _elapsed(self) -> str:
+        seconds = 0 if self.started_at is None else int(time.monotonic() - self.started_at)
+        minutes, seconds = divmod(seconds, 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _refresh_elapsed(self) -> None:
+        if not self.processing:
+            return
+        elapsed = self._elapsed()
+        started_at = self.started_at or time.monotonic()
+        frame = self.ACTIVITY_FRAMES[int((time.monotonic() - started_at) * 4) % len(self.ACTIVITY_FRAMES)]
+        if self.last_progress is None:
+            self.progress_time.configure(text=f"{frame}  {elapsed}")
+        else:
+            self.progress_time.configure(
+                text=f"{frame}  {self.last_progress.percent}%  ·  {elapsed}"
+            )
 
     def _show_done(self, result: BatchResult) -> None:
         self.output_dir = result.output_dir
-        self.progress.configure(value=100)
+        elapsed = self._elapsed()
+        self.processing = False
+        self.progress.stop()
+        self.progress.configure(mode="determinate", value=100)
+        self.progress_stage.configure(text="Готово", fg=ACCENT)
+        self.progress_time.configure(text=f"100%  ·  {elapsed}")
         self.choose_button.configure(state="normal")
         self.run_button.configure(state="normal")
         self.open_button.pack(side="left", padx=(12, 0))
@@ -273,21 +321,29 @@ class MedMaskApp:
         review = result.needs_review
         skipped = sum(result.skipped_by_extension.values())
         lines = [
-            f"Готово: {result.successful} PDF.",
+            f"Создано PDF: {result.successful}.",
             f"Результат: {result.output_dir}",
         ]
         if result.failed:
             lines.append(f"Не удалось обработать: {result.failed}.")
+            errors = sorted({item.error for item in result.files if item.error})
+            if errors:
+                lines.append(f"Причина: {'; '.join(errors)}.")
         if review:
             lines.append(f"Требуют проверки: {len(review)}. Подробности находятся в _ОТЧЁТ.txt.")
         if skipped:
             lines.append(f"Неподдерживаемых файлов пропущено: {skipped}.")
-        self.status.configure(text="\n".join(lines), fg=WARNING if review else ACCENT)
+        color = ERROR if result.successful == 0 else WARNING if review else ACCENT
+        self.status.configure(text="\n".join(lines), fg=color)
 
     def _show_error(self, error: Exception) -> None:
+        self.processing = False
+        self.progress.stop()
         self.choose_button.configure(state="normal")
         self.run_button.configure(state="normal" if self.source_dir else "disabled")
-        self.progress.configure(value=0)
+        self.progress.configure(mode="determinate", value=0)
+        self.progress_stage.configure(text="Ошибка", fg=ERROR)
+        self.progress_time.configure(text=self._elapsed())
         if isinstance(error, MedMaskError):
             message = str(error)
         else:

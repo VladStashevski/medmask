@@ -2257,7 +2257,15 @@ def _wrap_line(line, font, fontsize, max_width):
     return result or [""]
 
 
-def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0):
+def _should_report_progress(current, total):
+    """Ограничивает число событий прогресса примерно сотней на один этап."""
+    if total <= 0:
+        return False
+    step = max(1, total // 100)
+    return current == 1 or current == total or current % step == 0
+
+
+def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0, on_progress=None):
     if fitz is None:
         return None
     fontfile = _find_cyrillic_font()
@@ -2269,6 +2277,9 @@ def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0):
     leading = fontsize * 1.35
     out = fitz.open()
 
+    total_lines = sum(max(1, len(text.split("\n"))) for text in page_texts)
+    processed_lines = 0
+
     for text, rect in zip(page_texts, page_rects):
         width = rect.width or 595.0
         height = rect.height or 842.0
@@ -2278,6 +2289,9 @@ def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0):
         wrapped = []
         for line in text.split("\n"):
             wrapped.extend(_wrap_line(line, font, fontsize, max_width))
+            processed_lines += 1
+            if on_progress and _should_report_progress(processed_lines, total_lines):
+                on_progress("render", processed_lines, total_lines)
 
         page = out.new_page(width=width, height=height)
         page.insert_font(fontname=fontname, fontfile=fontfile)
@@ -2302,7 +2316,7 @@ SCAN_PLACEHOLDER = "[СКАН/ИЗОБРАЖЕНИЕ: текст не извле
 A4_RECT_WH = (595.0, 842.0)
 
 
-def build_pages_from_pdf(path: str):
+def build_pages_from_pdf(path: str, on_progress=None):
     doc = fitz.open(path)
     page_texts, page_rects = [], []
     scan_pages, image_pages = [], []
@@ -2318,15 +2332,21 @@ def build_pages_from_pdf(path: str):
                 page_texts.append(SCAN_PLACEHOLDER if has_images else "")
                 if has_images:
                     scan_pages.append(idx)
+                if on_progress:
+                    on_progress("anonymize", idx, doc.page_count)
                 continue
             if has_images:
                 image_pages.append(idx)
             page_texts.append(depersonalize(reflow_text(raw), mem=mem, sweep=False))
             text_page_idx.append(len(page_texts) - 1)
-        for k in text_page_idx:
+            if on_progress:
+                on_progress("anonymize", idx, doc.page_count)
+        for position, k in enumerate(text_page_idx, start=1):
             page_texts[k] = normalize_layout(
                 sanitize_for_windows(mem.sweep_fio(page_texts[k]))
             )
+            if on_progress:
+                on_progress("finalize", position, len(text_page_idx))
         return page_texts, page_rects, scan_pages, image_pages
     finally:
         doc.close()
@@ -2338,8 +2358,8 @@ def build_pages_from_text(text: str):
     return [cleaned], [rect]
 
 
-def save_clean_pdf(page_texts, page_rects, out_path: str):
-    out = render_text_pdf(page_texts, page_rects)
+def save_clean_pdf(page_texts, page_rects, out_path: str, on_progress=None):
+    out = render_text_pdf(page_texts, page_rects, on_progress=on_progress)
     if out is None:
         raise RuntimeError("не найден шрифт с кириллицей — PDF не собран")
     try:
@@ -2374,14 +2394,19 @@ _NUMERIC_AUDIT_KINDS = {"ТЕЛЕФОН", "ТЕЛЕФОН-МЕЖД", "СНИЛС
 _FIO_AUDIT_KINDS = {"ФИО-ТРИПЛЕТ", "ФИО-ИНИЦИАЛЫ", "ФИО-КАПС"}
 
 
-def audit_pdf(out_path: str):
+def audit_pdf(out_path: str, on_progress=None):
     findings = []
     try:
         doc = fitz.open(out_path)
     except Exception:
         return findings
     try:
-        full = "\n".join(p.get_text("text") for p in doc)
+        pages = []
+        for idx, page in enumerate(doc, start=1):
+            pages.append(page.get_text("text"))
+            if on_progress:
+                on_progress("audit", idx, doc.page_count)
+        full = "\n".join(pages)
     finally:
         doc.close()
 

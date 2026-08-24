@@ -24,12 +24,19 @@ class Progress:
     completed: int
     total: int
     current_name: str
+    stage: str = "Подготовка документа"
+    detail: str = ""
+    file_fraction: float = 0.0
 
     @property
     def percent(self) -> int:
         if self.total == 0:
             return 0
-        return round(self.completed * 100 / self.total)
+        fraction = min(1.0, max(0.0, self.file_fraction))
+        value = round((self.completed + fraction) * 100 / self.total)
+        if self.completed < self.total and fraction > 0:
+            return max(1, min(99, value))
+        return min(100, max(0, value))
 
 
 @dataclass
@@ -73,6 +80,7 @@ class BatchResult:
 
 
 ProgressCallback = Callable[[Progress], None]
+FileProgressCallback = Callable[[str, float, str], None]
 
 
 def _hidden_or_temporary(relative_path: Path) -> bool:
@@ -130,22 +138,58 @@ def _safe_error(error: Exception) -> str:
     return f"ошибка обработки ({type(error).__name__})"
 
 
-def _process_file(path: Path, number: int, output_dir: Path) -> FileResult:
+_ENGINE_PHASES = {
+    "anonymize": ("Извлечение и обезличивание", 0.05, 0.47, "Страница"),
+    "finalize": ("Финальная обработка текста", 0.52, 0.10, "Страница"),
+    "render": ("Создание нового PDF", 0.65, 0.21, "Фрагмент"),
+    "audit": ("Проверка результата", 0.88, 0.10, "Страница"),
+}
+
+
+def _process_file(
+    path: Path,
+    number: int,
+    output_dir: Path,
+    on_stage: FileProgressCallback | None = None,
+) -> FileResult:
     result = FileResult(number=number, source_path=path)
     output_path = output_dir / f"{result.code}.pdf"
 
+    def notify(stage: str, fraction: float, detail: str = "") -> None:
+        if on_stage:
+            on_stage(stage, fraction, detail)
+
+    def engine_progress(phase: str, completed: int, total: int) -> None:
+        stage, start, span, unit = _ENGINE_PHASES[phase]
+        ratio = completed / total if total else 1.0
+        notify(stage, start + span * ratio, f"{unit} {completed} из {total}")
+
     try:
+        notify("Чтение документа", 0.02)
         if path.suffix.lower() == ".pdf":
-            page_texts, page_rects, scan_pages, image_pages = engine.build_pages_from_pdf(str(path))
+            page_texts, page_rects, scan_pages, image_pages = engine.build_pages_from_pdf(
+                str(path),
+                on_progress=engine_progress,
+            )
             result.scan_pages = scan_pages
             result.image_pages = image_pages
         else:
             raw_text = engine.READERS[path.suffix.lower()](str(path))
+            notify("Обезличивание текста", 0.20)
             page_texts, page_rects = engine.build_pages_from_text(raw_text)
+            notify("Текст обезличен", 0.62)
 
-        engine.save_clean_pdf(page_texts, page_rects, str(output_path))
+        notify("Создание нового PDF", 0.65)
+        engine.save_clean_pdf(
+            page_texts,
+            page_rects,
+            str(output_path),
+            on_progress=engine_progress,
+        )
         result.output_path = output_path
-        result.findings = engine.audit_pdf(str(output_path))
+        notify("Проверка результата", 0.88)
+        result.findings = engine.audit_pdf(str(output_path), on_progress=engine_progress)
+        notify("Документ готов", 0.99)
     except Exception as error:
         result.error = _safe_error(error)
         if output_path.exists():
@@ -249,11 +293,20 @@ def process_folder(
     results: list[FileResult] = []
     total = len(files)
     for number, path in enumerate(files, start=1):
-        if on_progress:
-            on_progress(Progress(number - 1, total, path.name))
-        results.append(_process_file(path, number, output_dir))
-        if on_progress:
-            on_progress(Progress(number, total, path.name))
+        def report_stage(stage: str, fraction: float, detail: str) -> None:
+            if on_progress:
+                on_progress(
+                    Progress(
+                        completed=number - 1,
+                        total=total,
+                        current_name=path.name,
+                        stage=stage,
+                        detail=detail,
+                        file_fraction=fraction,
+                    )
+                )
+
+        results.append(_process_file(path, number, output_dir, on_stage=report_stage))
 
     report_path = write_safe_report(output_dir, results, skipped)
     return BatchResult(

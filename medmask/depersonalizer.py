@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, date
 import hashlib
 import unicodedata
+from functools import lru_cache
 from pathlib import Path
 
 import chardet
@@ -175,8 +176,18 @@ READERS = {
 
 # ==================== НОРМАЛИЗАЦИЯ / ХЕЛПЕРЫ ====================
 
+# «Ф.И.О. пациентаСОКОЛОВА» — при извлечении текста из PDF метка и значение
+# слипаются, и фамилия перестаёт быть началом слова: ни одно правило ФИО её
+# не видит. Разделяем строчную букву и следующее за ней слово из прописных.
+_GLUED_UPPER_VALUE_RE = re.compile(
+    # «пациентаСОКОЛОВА» — метка слиплась со значением из прописных;
+    # «УАрутюнян», «ФИОИванов» — OCR склеил инициал или аббревиатуру с фамилией.
+    r"(?<=[а-яё])(?=[А-ЯЁ]{3,})|(?<=[А-ЯЁ])(?=[А-ЯЁ][а-яё])"
+)
+
+
 def norm(s: str) -> str:
-    return (
+    cleaned = (
         s.replace("\u00A0", " ")
          .replace("\u202F", " ")
          .replace("\u2007", " ")
@@ -192,6 +203,7 @@ def norm(s: str) -> str:
          .replace("\u2012", "-")
          .replace("\u2212", "-")
     )
+    return _GLUED_UPPER_VALUE_RE.sub(" ", cleaned)
 
 
 def _line_ending(s: str) -> str:
@@ -510,76 +522,56 @@ def _dob_split_inline_to_age(m: re.Match) -> str:
     return label + (age_phrase(age))
 
 # ---------- КОНТЕКСТ ВРАЧА (НЕ маскируем) ----------
+# Роль называет медработника прямо и не может относиться к пациенту.
+DOCTOR_ROLE_WORDS = (
+    r"врач\w*",
+    r"доктор\w*",
+    r"лечащ\w+\s+врач\w*",
+    r"фио\s+врач\w*",
+    r"зав(?:едующ\w+)?\.?\s*отделени\w+",
+    r"заведующ\w*",
+    r"начальник\w*",
+    r"медсестр\w*",
+    r"медбрат\w*",
+    r"фельдшер\w*",
+    r"акушер\w*",
+    r"ординатор\w*",
+    r"интерн\w*",
+    r"подпис\w+\s+врач\w*",
+    r"медицинск\w+\s+работник\w*",
+    r"медработник\w*",
+    r"фио\s+медицинск\w+\s+работник\w*",
+    r"лаборант\w*",
+    r"рентгенлаборант\w*",
+    r"специалист\w*",
+)
+
+# Специальность называет человека только в личных формах: «невролог»,
+# «невролога», «неврологом». Формы «неврология», «неврологическое»,
+# «реанимация» — это название отделения или раздела документа, и рядом с ними
+# обычно стоит как раз ФИО пациента, а не врача.
+SPECIALTY_STEMS = (
+    "анестезиолог", "нейрохирург", "хирург", "физиотерапевт",
+    "рефлексотерапевт", "психотерапевт", "терапевт", "кардиолог", "невролог",
+    "гинеколог", "уролог", "онколог", "рентгенолог", "радиолог",
+    "эндокринолог", "офтальмолог", "окулист", "оториноларинголог",
+    "отоларинголог", "психиатр", "нарколог", "дерматовенеролог",
+    "дерматолог", "венеролог", "инфекционист", "ревматолог", "пульмонолог",
+    "гастроэнтеролог", "нефролог", "колопроктолог", "проктолог",
+    "травматолог", "ортопед", "стоматолог", "патологоанатом", "фтизиатр",
+    "аллерголог", "иммунолог", "неонатолог", "реаниматолог", "эпидемиолог",
+    "диетолог", "гематолог", "маммолог", "педиатр", "диагност",
+)
+# Падежные окончания живого человека; «ия», «ическое», «ика» сюда не входят.
+_SPECIALTY_ENDING = r"(?:ами|ам|ах|ов|ом|а|у|е|и|ы)?"
+SPECIALTY_RE = re.compile(
+    r"\b(?:" + "|".join(SPECIALTY_STEMS) + r")" + _SPECIALTY_ENDING + r"\b|\bлор\b",
+    re.IGNORECASE,
+)
+
 DOCTOR_CONTEXT_RE = re.compile(
-    r"(?i)\b("
-        r"врач\w*"
-        r"|доктор\w*"
-        r"|лечащ\w+\s+врач\w*"
-        r"|фио\s+врач\w*"
-        r"|зав(?:едующ\w+)?\.?\s*отделени\w+"
-        r"|медсестр\w*"
-        r"|фельдшер\w*"
-        r"|акушер\w*"
-        r"|анестезиолог\w*"
-        r"|хирург\w*"
-        r"|терапевт\w*"
-        r"|кардиолог\w*"
-        r"|невролог\w*"
-        r"|гинеколог\w*"
-        r"|уролог\w*"
-        r"|онколог\w*"
-        r"|ординатор\w*"
-        r"|интерн\w*"
-        r"|подпис\w+\s+врач\w*"
-        r"|медицинск\w+\s+работник\w*"
-        r"|медработник\w*"
-        r"|фио\s+медицинск\w+\s+работник\w*"
-        r"|рентгенолог\w*"
-        r"|рентгенлаборант\w*"
-        r"|радиолог\w*"
-        r"|лаборант\w*"
-        r"|эндокринолог\w*"
-        r"|офтальмолог\w*"
-        r"|окулист\w*"
-        r"|оторинолар\w*"
-        r"|отоларинголог\w*"
-        r"|лор\b"
-        r"|психиатр\w*"
-        r"|психотерапевт\w*"
-        r"|нарколог\w*"
-        r"|дерматолог\w*"
-        r"|дерматовенеролог\w*"
-        r"|венеролог\w*"
-        r"|инфекционист\w*"
-        r"|ревматолог\w*"
-        r"|пульмонолог\w*"
-        r"|гастроэнтеролог\w*"
-        r"|нефролог\w*"
-        r"|проктолог\w*"
-        r"|колопроктолог\w*"
-        r"|травматолог\w*"
-        r"|ортопед\w*"
-        r"|стоматолог\w*"
-        r"|патологоанатом\w*"
-        r"|фтизиатр\w*"
-        r"|аллерголог\w*"
-        r"|иммунолог\w*"
-        r"|неонатолог\w*"
-        r"|реаниматолог\w*"
-        r"|реанимац\w*"
-        r"|эпидемиолог\w*"
-        r"|диетолог\w*"
-        r"|физиотерапевт\w*"
-        r"|рефлексотерапевт\w*"
-        r"|генетик\w*"
-        r"|гематолог\w*"
-        r"|маммолог\w*"
-        r"|нейрохирург\w*"
-        r"|диагност\w*"
-        r"|заведующ\w*"
-        r"|начальник\w*"
-        r"|специалист\w*"
-    r")\b"
+    r"\b(?:" + "|".join(DOCTOR_ROLE_WORDS) + r")\b|" + SPECIALTY_RE.pattern,
+    re.IGNORECASE,
 )
 
 doctor_label_only_re = re.compile(
@@ -649,7 +641,10 @@ any_raw_date_re = re.compile(r"\d{1,2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{2,4}")
 # ---------- ФИО — значения ----------
 RUS_WORD = r"[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?"
 PATRONYMIC = r"[А-ЯЁ][а-яё]+(?:ович|евич|иевич|ич|овна|евна|иевна|ьевна|ична|инична|оглы|кызы)\b"
-SURNAME_SUFFIX = r"(?:ов|ова|ев|ева|ин|ина|ын|ына|ский|ская|цкий|цкая|ко|енко|ук|юк|чук|щук|дзе|швили|ян)"
+SURNAME_SUFFIX = (
+    r"(?:ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкий|цкая|ко|енко|ук|юк|чук|щук|"
+    r"дзе|швили|ян)"
+)
 SURNAME = rf"[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?{SURNAME_SUFFIX}"
 
 KEEP_COLUMN_LABEL = (
@@ -933,9 +928,25 @@ _SURNAME_SUFFIX_END_RE = re.compile(SURNAME_SUFFIX + r"$", re.IGNORECASE)
 _FIO_TRAILING_NAME_TOKEN_RE = re.compile(
     r"(\[FIO\])([ \t\u00a0]+)([А-ЯЁ][А-Яа-яёЁ]{2,})"
 )
+# Фамилия перед уже замаскированными инициалами: «заведующего отделением
+# ВЕТРОВА [FIO]». Зеркало _FIO_TRAILING_NAME_TOKEN_RE, которое убирает имя и
+# отчество после [FIO].
+_FIO_LEADING_NAME_TOKEN_RE = re.compile(
+    r"([А-ЯЁ][А-Яа-яёЁ]{2,})([ \t\u00a0]+)(\[FIO\])"
+)
 _FIO_SHORT_DOB_RE = re.compile(
     r"(\[FIO\]\s*[.,;:/\-]*\s*)"
     r"\d{1,2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{2}(?!\d)"
+)
+
+
+# Окончания, которых не бывает у ФИО: прилагательные, причастия и отглагольные
+# существительные. Такие слова попадают в память из ошибочных срабатываний, а
+# затем финальный проход затирает их по всему документу и портит диагнозы
+# («Повторный ишемический инсульт» → «[FIO] ишемический инсульт»).
+_NON_NAME_ENDING_RE = re.compile(
+    r"(?:ый|ое|ые|ым|ому|ение|ения|ений|ание|ания|аний|ость|ости|ство|ства|ура|уры)$",
+    re.IGNORECASE,
 )
 
 
@@ -957,6 +968,9 @@ class PIIMemory:
 
     def __init__(self):
         self.fio_tokens = set()
+        # Токены из явно подписанных полей («Пациент:», «Врач:», «Фамилия:»):
+        # им доверия больше, чем случайно подхваченному слову рядом с ФИО.
+        self.labeled_tokens: set[str] = set()
         self.dob_values: set[tuple[int, int, int]] = set()
         self.record_tokens: set[str] = set()
 
@@ -981,6 +995,7 @@ class PIIMemory:
             tok = raw.strip(".,;:\"'«»()[]<>")
             if _is_namelike(tok):
                 self.fio_tokens.add(tok.lower())
+                self.labeled_tokens.add(tok.lower())
 
     def seed_from_filename(self, filename: str) -> None:
         """Запоминает только сильные именные токены из имени исходного файла."""
@@ -1004,14 +1019,29 @@ class PIIMemory:
         if len(token) >= 3 and any(ch.isdigit() for ch in token):
             self.record_tokens.add(token)
 
+    def _is_sweepable(self, token: str) -> bool:
+        """Можно ли затирать токен по всему документу.
+
+        Затирание идёт без разбора контекста, поэтому обычное слово, случайно
+        попавшее в память, испортит весь текст. Пропускаем только то, что
+        похоже на фамилию, имя или отчество, либо пришло из подписанного поля
+        и при этом не выглядит прилагательным.
+        """
+        if _is_strong_name_token(token.capitalize()):
+            return True
+        if _NON_NAME_ENDING_RE.search(token):
+            return False
+        return token in self.labeled_tokens
+
     def sweep_fio(self, text: str) -> str:
         """Затирает оставшиеся вхождения запомненных токенов ФИО.
 
         В строгом режиме маскируются и пациент, и сотрудники: ФИО врача,
         медсестры или владельца электронной подписи тоже являются ПДн.
         """
-        long_toks = sorted((t for t in self.fio_tokens if len(t) >= 6), key=len, reverse=True)
-        short_toks = sorted((t for t in self.fio_tokens if 4 <= len(t) < 6), key=len, reverse=True)
+        sweepable = [t for t in self.fio_tokens if self._is_sweepable(t)]
+        long_toks = sorted((t for t in sweepable if len(t) >= 6), key=len, reverse=True)
+        short_toks = sorted((t for t in sweepable if 4 <= len(t) < 6), key=len, reverse=True)
 
         def _mask_line(line: str) -> str:
             for tok in long_toks:
@@ -1032,17 +1062,27 @@ class PIIMemory:
                 return match.group(1)
             return match.group(0)
 
+        def _mask_name_head(match: re.Match) -> str:
+            token = match.group(1)
+            if not _is_namelike(token):
+                return match.group(0)
+            if _STAFF_CONTEXT_RE.search(token) or DOCTOR_CONTEXT_RE.search(token):
+                return match.group(0)
+            self.fio_tokens.add(token.lower())
+            return match.group(3)
+
         # Если фамилия была известна из имени файла/папки, убираем стоящие
         # следом имя и отчество, в том числе обрезанные OCR окончания.
         for _ in range(2):
             text = _FIO_TRAILING_NAME_TOKEN_RE.sub(_mask_name_tail, text)
+        text = _FIO_LEADING_NAME_TOKEN_RE.sub(_mask_name_head, text)
         text = re.sub(r"(?:\[FIO\]\s*){2,}", "[FIO] ", text)
         text = _FIO_SHORT_DOB_RE.sub(r"\1[AGE]", text)
 
         text = re.sub(r"\b[А-ЯЁ][а-яё]{1,3}-\[FIO\]", "[FIO]", text)
         text = "\n".join(
             _mask_dob_next_to_fio(
-                _mask_bare_dob_after_fio_in_line(line),
+                _mask_bare_dob_after_fio_in_line(_mask_dob_with_explicit_age(line, self)),
                 force=bool(PATIENT_MARKER_RE.search(line)),
             )
             for line in text.split("\n")
@@ -1059,6 +1099,11 @@ class PIIMemory:
                 calc_age_from_str(f"{day:02d}.{month:02d}.{year:04d}")
             )
             text = numeric.sub(replacement, text)
+
+            # В бланках год рождения нередко остаётся сам по себе: «другое
+            # (указать) 1947». Отдельно стоящий год известной даты рождения —
+            # такой же идентификатор, как и полная дата.
+            text = re.sub(rf"(?<![\d.\-/]){year}(?![\d.\-/])", replacement, text)
 
             month_forms = [name for name, number in MONTH_MAP.items() if number == month]
             if month_forms:
@@ -1501,6 +1546,52 @@ _fio_dob_inline_re = re.compile(
 )
 
 
+# «(05.09.1947 / 79 лет)» — рядом с датой прямо указан возраст. Если разница
+# между годом и возрастом сходится, это дата рождения, а не дата осмотра:
+# дату убираем, возраст оставляем.
+_DOB_AGE_CONTEXT_RE = re.compile(
+    r"(?i)\[FIO\]|возраст|рождени|ф\.?\s*и\.?\s*о|пациент|больн"
+)
+_DOB_WITH_AGE_RE = re.compile(
+    rf"(?:{_ANY_DOB_ALT})(?:\s*[/,;(\-\u2013\u2014]?\s*)(?P<age>\d{{1,3}}\s*{_AGE_UNIT_RE})",
+    re.IGNORECASE,
+)
+
+
+def _mask_dob_with_explicit_age(s: str, memory: "PIIMemory | None" = None) -> str:
+    if not _DOB_AGE_CONTEXT_RE.search(s):
+        return s
+
+    def repl(match: re.Match) -> str:
+        parts = _date_parts(match.group(0))
+        if parts is None:
+            return match.group(0)
+        stated = re.match(r"\s*(\d{1,3})", match.group("age"))
+        if stated is None:
+            return match.group(0)
+        if abs((date.today().year - parts[2]) - int(stated.group(1))) > 1:
+            return match.group(0)
+        if memory is not None:
+            memory.dob_values.add(parts)
+        return match.group("age")
+
+    return _DOB_WITH_AGE_RE.sub(repl, s)
+
+
+# Дата осмотра или подписи не может быть старше нескольких лет, а дата
+# рождения взрослого пациента — может. Год давнее этого порога рядом с ФИО
+# считаем датой рождения и заменяем возрастом.
+_ADULT_BIRTH_YEAR_GAP = 14
+
+
+def _looks_like_birth_year(fragment: str) -> bool:
+    match = re.search(r"\d{4}", fragment)
+    if not match:
+        return False
+    year = int(match.group(0))
+    return 1900 <= year <= date.today().year - _ADULT_BIRTH_YEAR_GAP
+
+
 def _mask_dob_next_to_fio(s: str, force: bool = False) -> str:
     """Убирает ДР, стоящую сразу после [FIO], оставляя возраст.
 
@@ -1516,7 +1607,7 @@ def _mask_dob_next_to_fio(s: str, force: bool = False) -> str:
         head, age_part = m.group(1), m.group(2)
         if age_part:
             return head + age_part.strip().strip("(),; ")
-        if not force:
+        if not force and not _looks_like_birth_year(m.group(0)):
             return m.group(0)
         return head + (find_age_from_text(m.group(0)) or "[AGE]")
 
@@ -2228,15 +2319,39 @@ _STAFF_ROLE_BODY = (
     r"согласовал\w*|ответственн\w+\s+лиц\w*)"
 )
 _STAFF_NAME_TOKEN = r"(?:[А-ЯЁ][а-яё]+|[А-ЯЁ]{2,}|[А-ЯЁ]\.)"
+# «Петров П.П.» — второй инициал приклеен к точке, поэтому разделителем служит
+# либо пробел, либо сама точка. Без этого в строке оставался хвост «П.».
+_STAFF_NAME_SEP = r"(?:\s+|(?<=\.))"
+# Отделять значение может двоеточие или тире с пробелами. Дефис внутри слова
+# («Врач-невролог Сидорова М.И.») разделителем не является: иначе название
+# специальности принимается за фамилию и стирается вместе с ней.
+_STAFF_LABEL_SEP = r"(?:\s*:\s*|\s+[-\u2013\u2014]\s+)"
 _STAFF_LABEL_VALUE_RE = re.compile(
-    rf"(?i)(\b(?:фио\s+)?(?:лечащ\w+\s+)?{_STAFF_ROLE_BODY}"
-    rf"\b\s*[:\-]\s*)"
-    rf"({_STAFF_NAME_TOKEN}(?:\s+{_STAFF_NAME_TOKEN}){{0,2}})"
+    rf"((?i:\b(?:фио\s+)?(?:лечащ\w+\s+)?{_STAFF_ROLE_BODY}\b){_STAFF_LABEL_SEP})"
+    rf"({_STAFF_NAME_TOKEN}(?:{_STAFF_NAME_SEP}{_STAFF_NAME_TOKEN}){{0,2}})"
 )
 _STAFF_LABEL_ONLY_RE = re.compile(
     rf"(?i)^\s*(?:фио\s+)?(?:лечащ\w+\s+)?{_STAFF_ROLE_BODY}\s*[:\-]?\s*$"
 )
 _STAFF_CONTEXT_RE = re.compile(rf"(?i)\b{_STAFF_ROLE_BODY}\b")
+
+# В строке с ролью фамилия сотрудника часто стоит в косвенном падеже и без
+# двоеточия: «зав.РАО1 Ветровой Е.Е.», «Панько С.В. - заведующий отделением».
+# Окончания «-ой», «-а» в SURNAME_SUFFIX не входят и войти не могут: тогда под
+# фамилию попадут обычные слова («левой», «больной»). Поэтому косвенные формы
+# маскируются только там, где роль названа прямо, а рядом стоят инициалы.
+_STAFF_ROLE_HINT_RE = re.compile(
+    r"(?i)\b(?:зав\.?|зам\.?|гл\.?\s*врач\w*|врач\w*|доктор\w*|медсестр\w*|медбрат\w*|"
+    r"фельдшер\w*|акушер\w*|заведующ\w*|ординатор\w*|интерн\w*|лаборант\w*|подпис\w*|"
+    r"психолог\w*|фармаколог\w*|логопед\w*|методист\w*|инструктор\w*|дежурн\w*|деж\.)"
+)
+_NAME_WITH_INITIALS_RE = re.compile(
+    r"\b([А-ЯЁ][а-яё]{2,})\s*,?\s*([А-ЯЁ]\.\s*[А-ЯЁ]\.?)(?![а-яё])"
+)
+# Обратный порядок: «Подпись врача С.Е Белогорцев».
+_INITIALS_WITH_NAME_RE = re.compile(
+    r"\b[А-ЯЁ]\.\s*[А-ЯЁ]\.?\s+([А-ЯЁ][а-яё]{2,})\b"
+)
 
 
 def _mask_certificate_in_line(core: str) -> tuple[str, bool]:
@@ -2311,6 +2426,17 @@ def strict_privacy_pass(text: str) -> str:
         core = medical_record_header_re.sub(_header_record_sub, core)
         core = medical_record_inline_re.sub(_inline_record_sub, core)
         core = _STAFF_LABEL_VALUE_RE.sub(_staff_sub, core)
+
+        def _staff_initials_sub(match: re.Match) -> str:
+            word = match.group(1)
+            if _is_not_fio(word) or word.lower() in _NAME_SWEEP_STOPWORDS:
+                return match.group(0)
+            _remember_fio_strict(word)
+            return "[FIO]"
+
+        if _STAFF_ROLE_HINT_RE.search(core) or SPECIALTY_RE.search(core):
+            core = _NAME_WITH_INITIALS_RE.sub(_staff_initials_sub, core)
+            core = _INITIALS_WITH_NAME_RE.sub(_staff_initials_sub, core)
         core, expects_certificate = _mask_certificate_in_line(core)
         core = ocr_upper_fio_demographics_re.sub(_ocr_demographics_sub, core)
         core = _mask_fio_unless_org(fio_triplet_inline_re, core)
@@ -2517,7 +2643,27 @@ _FONT_NAME_PREFERENCE = (
 )
 
 
+# Свой шрифт в сборке: результат не зависит от того, какие шрифты стоят в
+# системе, и PDF получается одинаковым в macOS и Windows. Системный поиск
+# остаётся запасным вариантом, если файл почему-то отсутствует.
+BUNDLED_FONT_PATH = Path(__file__).resolve().parent / "assets" / "LiberationSans-Regular.ttf"
+
+
+@lru_cache(maxsize=1)
+def _bundled_cyrillic_font() -> str | None:
+    if fitz is None or not BUNDLED_FONT_PATH.is_file():
+        return None
+    try:
+        fitz.Font(fontfile=str(BUNDLED_FONT_PATH))
+    except Exception:
+        return None
+    return str(BUNDLED_FONT_PATH)
+
+
 def _find_cyrillic_font():
+    bundled = _bundled_cyrillic_font()
+    if bundled:
+        return bundled
     for path in _FONT_CANDIDATES:
         if os.path.exists(path):
             return path

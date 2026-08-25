@@ -3,6 +3,23 @@ from __future__ import annotations
 import sys
 
 
+def _report(message: object, stream=None) -> None:
+    """Печатает, если есть куда.
+
+    В оконной сборке PyInstaller stdout и stderr отсутствуют, и обычный print
+    роняет программу. В windowed-режиме упавший процесс показывает модальное
+    окно с трейсбеком, которое некому закрыть, — так пакетный режим зависал.
+    """
+    target = stream or sys.stdout
+    if target is None:
+        return
+    try:
+        print(message, file=target)
+        target.flush()
+    except (ValueError, OSError):
+        pass
+
+
 def run() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--batch":
         from medmask.batch import MedMaskError, process_folder
@@ -10,9 +27,12 @@ def run() -> int:
         try:
             result = process_folder(sys.argv[2])
         except MedMaskError as error:
-            print(error, file=sys.stderr)
+            _report(error, sys.stderr)
             return 1
-        print(result.output_dir)
+        except Exception as error:  # noqa: BLE001 — код возврата важнее трейсбека
+            _report(f"Не удалось завершить обработку: {error}", sys.stderr)
+            return 1
+        _report(result.output_dir)
         return 0
 
     from medmask.app import main

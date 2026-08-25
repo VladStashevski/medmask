@@ -45,7 +45,9 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    disable_windowed_traceback=False,
+    # Окно с трейсбеком в оконной сборке ждёт нажатия кнопки: на сервере
+    # сборки его некому закрыть, и процесс висит до таймаута.
+    disable_windowed_traceback=True,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,

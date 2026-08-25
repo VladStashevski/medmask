@@ -68,3 +68,19 @@ def test_smoke_fixture_contains_personal_data_to_mask() -> None:
     text = documents[0].read_text(encoding="utf-8")
     assert re.search(r"\d{2}\.\d{2}\.\d{4}", text)
     assert "СНИЛС" in text
+
+
+def test_batch_mode_survives_without_stdout(tmp_path, monkeypatch) -> None:
+    """В оконной сборке stdout нет; пакетный режим не должен падать из-за печати."""
+    import main as entry_point
+
+    source = tmp_path / "Карты"
+    source.mkdir()
+    (source / "История.txt").write_text(
+        "Пациент: Иванов Иван Иванович\nДиагноз: ОНМК.\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("sys.stdout", None)
+    monkeypatch.setattr("sys.stderr", None)
+    monkeypatch.setattr("sys.argv", ["MedMask", "--batch", str(source)])
+    assert entry_point.run() == 0
+    assert list((tmp_path / "Обезличенные").glob("*.pdf"))

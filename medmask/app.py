@@ -1,4 +1,4 @@
-"""Минимальный настольный интерфейс MedMask на стандартном Tk."""
+"""Настольный экран MedMask: один холст, светлая тема, плавные переходы."""
 
 from __future__ import annotations
 
@@ -9,21 +9,43 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog
 
-from .batch import BatchResult, MedMaskError, Progress, process_folder
+from . import __version__
+from .batch import BatchResult, MedMaskError, Progress, discover_files, process_folder
+from .ui import Animator, Button, ProgressBar, RoundedBox, SegmentRow, TextItem, truncate_middle
 
 
-BG = "#F5F6F8"
+# Палитра светлой темы Civium: нейтрали zinc, акцент blue-600.
+PAGE = "#F7F7F8"
 CARD = "#FFFFFF"
-INK = "#17202A"
-MUTED = "#667085"
-ACCENT = "#176B5B"
-ACCENT_ACTIVE = "#105548"
-LINE = "#D9DEE7"
-WARNING = "#9A6700"
-ERROR = "#B42318"
+BORDER = "#E4E4E7"
+HAIRLINE = "#F0F0F2"
+INK = "#09090B"
+TEXT = "#3F3F46"
+MUTED = "#71717A"
+FAINT = "#A1A1AA"
+PRIMARY = "#2563EB"
+PRIMARY_HOVER = "#1D4ED8"
+PRIMARY_PRESS = "#1E40AF"
+TRACK = "#EFEFF1"
+SUCCESS = "#059669"
+WARNING = "#D97706"
+DANGER = "#DC2626"
+
+# Логические пиксели при 96 dpi. Реальные размеры даёт MedMaskApp.px():
+# в Windows системный масштаб 125-200 % увеличивает шрифты, и коробки должны
+# расти вместе с ними, иначе текст перестаёт помещаться.
+PAD = 32
+CARD_PAD = 24
+WINDOW_WIDTH = 700
+MIN_WIDTH = 620
+BUTTON_HEIGHT = 36
+CARD_RADIUS = 14
+BUTTON_RADIUS = 10
+PROGRESS_HEIGHT = 8
 
 
 def open_folder(path: Path) -> None:
@@ -35,9 +57,66 @@ def open_folder(path: Path) -> None:
         subprocess.run(["xdg-open", str(path)], check=False)
 
 
-class MedMaskApp:
-    ACTIVITY_FRAMES = ("●··", "·●·", "··●", "·●·")
+def plural(count: int, one: str, few: str, many: str) -> str:
+    tail = abs(count) % 100
+    if 11 <= tail <= 14:
+        return many
+    tail %= 10
+    if tail == 1:
+        return one
+    if 2 <= tail <= 4:
+        return few
+    return many
 
+
+def _fonts() -> dict[str, tkfont.Font]:
+    family = tkfont.nametofont("TkDefaultFont").actual("family")
+    mono = "Menlo" if sys.platform == "darwin" else "Consolas"
+    if mono not in tkfont.families():
+        mono = tkfont.nametofont("TkFixedFont").actual("family")
+    return {
+        "title": tkfont.Font(family=family, size=21, weight="bold"),
+        "subtitle": tkfont.Font(family=family, size=12),
+        "label": tkfont.Font(family=family, size=11),
+        "path": tkfont.Font(family=family, size=14),
+        "button": tkfont.Font(family=family, size=12),
+        "stage": tkfont.Font(family=family, size=13),
+        "body": tkfont.Font(family=family, size=12),
+        "meta": tkfont.Font(family=mono, size=11),
+    }
+
+
+PRIMARY_STYLE = {
+    "fill": PRIMARY,
+    "hover": PRIMARY_HOVER,
+    "press": PRIMARY_PRESS,
+    "text": "#FFFFFF",
+    "disabled_fill": "#EAEAEC",
+    "disabled_text": FAINT,
+}
+
+SECONDARY_STYLE = {
+    "fill": CARD,
+    "hover": "#F4F4F5",
+    "press": "#E9E9EC",
+    "text": INK,
+    "outline": "#DCDCE0",
+    "disabled_outline": "#EDEDEF",
+    "disabled_fill": CARD,
+    "disabled_text": FAINT,
+}
+
+GHOST_STYLE = {
+    "fill": CARD,
+    "hover": "#F4F4F5",
+    "press": "#E9E9EC",
+    "text": TEXT,
+    "disabled_fill": CARD,
+    "disabled_text": FAINT,
+}
+
+
+class MedMaskApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.source_dir: Path | None = None
@@ -46,162 +125,208 @@ class MedMaskApp:
         self.processing = False
         self.started_at: float | None = None
         self.last_progress: Progress | None = None
+        self.has_documents = False
+        self.scan_token = 0
+        self.content_width = 0
+        self.detail_text = ""
+        self.detail_color = MUTED
+        self.rise = 0.0
+
+        self.fonts = _fonts()
+        self.animator = Animator()
+        self.scale = self._scale_factor(root)
 
         root.title("MedMask")
-        root.geometry("720x520")
-        root.minsize(620, 480)
-        root.configure(bg=BG)
+        root.configure(bg=PAGE)
+        root.resizable(True, False)
 
-        self._configure_styles()
+        self.canvas = tk.Canvas(root, bg=PAGE, highlightthickness=0, bd=0)
+        self.canvas.pack(fill="both", expand=True)
+
         self._build()
-        self._select_from_arguments()
-        self.root.after(100, self._poll_events)
+        height = self._layout()
+        self._place_window(self.px(WINDOW_WIDTH), height)
+        root.minsize(self.px(MIN_WIDTH), height)
 
-    def _configure_styles(self) -> None:
-        style = ttk.Style(self.root)
-        if "clam" in style.theme_names():
-            style.theme_use("clam")
-        style.configure(
-            "Accent.TButton",
-            background=ACCENT,
-            foreground="white",
-            borderwidth=0,
-            padding=(18, 11),
-            font=("TkDefaultFont", 11, "bold"),
-        )
-        style.map("Accent.TButton", background=[("active", ACCENT_ACTIVE), ("disabled", LINE)])
-        style.configure(
-            "Secondary.TButton",
-            background=CARD,
-            foreground=INK,
-            bordercolor=LINE,
-            padding=(16, 10),
-            font=("TkDefaultFont", 10),
-        )
-        style.configure(
-            "MedMask.Horizontal.TProgressbar",
-            troughcolor="#E7EBF0",
-            background=ACCENT,
-            bordercolor="#E7EBF0",
-            lightcolor=ACCENT,
-            darkcolor=ACCENT,
-            thickness=10,
-        )
+        self._select_from_arguments()
+        self._intro()
+        self.root.after(16, self._tick)
+
+    @staticmethod
+    def _scale_factor(root: tk.Tk) -> float:
+        """Во сколько раз система крупнее стандартных 96 dpi."""
+        try:
+            return max(1.0, root.winfo_fpixels("1i") / 96.0)
+        except tk.TclError:
+            return 1.0
+
+    def px(self, value: float) -> int:
+        return max(1, round(value * self.scale))
+
+    # ---------- сцена ----------
 
     def _build(self) -> None:
-        outer = tk.Frame(self.root, bg=BG, padx=36, pady=30)
-        outer.pack(fill="both", expand=True)
+        canvas = self.canvas
+        animator = self.animator
+        fonts = self.fonts
 
-        tk.Label(
-            outer,
-            text="MedMask",
-            bg=BG,
-            fg=INK,
-            font=("TkDefaultFont", 26, "bold"),
-        ).pack(anchor="w")
-        tk.Label(
-            outer,
-            text="Локальное обезличивание медицинских документов",
-            bg=BG,
-            fg=MUTED,
-            font=("TkDefaultFont", 12),
-        ).pack(anchor="w", pady=(4, 22))
+        self.title = TextItem(canvas, animator, font=fonts["title"], color=INK, background=PAGE, anchor="nw")
+        self.subtitle = TextItem(canvas, animator, font=fonts["subtitle"], color=MUTED, background=PAGE, anchor="nw")
+        self.version = TextItem(canvas, animator, font=fonts["label"], color=FAINT, background=PAGE, anchor="ne")
 
-        card = tk.Frame(
-            outer,
-            bg=CARD,
-            highlightbackground=LINE,
-            highlightthickness=1,
-            padx=28,
-            pady=26,
-        )
-        card.pack(fill="both", expand=True)
+        self.card = RoundedBox(canvas, self.px(CARD_RADIUS), CARD, BORDER)
+        self.hairline = canvas.create_line(0, 0, 0, 0, fill=HAIRLINE, width=self.px(1))
 
-        self.folder_title = tk.Label(
-            card,
-            text="Выберите папку с историями",
-            bg=CARD,
-            fg=INK,
-            font=("TkDefaultFont", 16, "bold"),
-        )
-        self.folder_title.pack(anchor="w")
+        self.folder_label = TextItem(canvas, animator, font=fonts["label"], color=MUTED, background=CARD, anchor="nw")
+        self.folder_path = TextItem(canvas, animator, font=fonts["path"], color=INK, background=CARD, anchor="nw")
 
-        self.folder_path = tk.Label(
-            card,
-            text="PDF, изображения и офисные документы",
-            bg=CARD,
-            fg=MUTED,
-            justify="left",
-            anchor="w",
-            wraplength=590,
-            font=("TkDefaultFont", 10),
+        self.choose_button = Button(
+            canvas, animator,
+            text="Выбрать папку", command=self._choose_folder,
+            font=fonts["button"], style=SECONDARY_STYLE, background=CARD,
+            padding=self.px(16), radius=self.px(BUTTON_RADIUS), height=self.px(BUTTON_HEIGHT),
         )
-        self.folder_path.pack(fill="x", pady=(8, 18))
+        self.run_button = Button(
+            canvas, animator,
+            text="Обезличить", command=self._start,
+            font=fonts["button"], style=PRIMARY_STYLE, background=CARD,
+            padding=self.px(20), radius=self.px(BUTTON_RADIUS), height=self.px(BUTTON_HEIGHT),
+        )
+        self.open_button = Button(
+            canvas, animator,
+            text="Открыть результат", command=self._open_result,
+            font=fonts["button"], style=GHOST_STYLE, background=CARD,
+            padding=self.px(14), radius=self.px(BUTTON_RADIUS), height=self.px(BUTTON_HEIGHT),
+        )
+        self.run_button.set_enabled(False)
+        self.open_button.set_visible(False)
 
-        controls = tk.Frame(card, bg=CARD)
-        controls.pack(fill="x")
-        self.choose_button = ttk.Button(
-            controls,
-            text="Выбрать папку",
-            style="Secondary.TButton",
-            command=self._choose_folder,
-        )
-        self.choose_button.pack(side="left")
-        self.run_button = ttk.Button(
-            controls,
-            text="Обезличить",
-            style="Accent.TButton",
-            command=self._start,
-            state="disabled",
-        )
-        self.run_button.pack(side="left", padx=(12, 0))
-        self.open_button = ttk.Button(
-            controls,
-            text="Открыть результат",
-            style="Secondary.TButton",
-            command=self._open_result,
-        )
+        self.stage = TextItem(canvas, animator, font=fonts["stage"], color=INK, background=CARD, anchor="nw")
+        self.meta = TextItem(canvas, animator, font=fonts["meta"], color=MUTED, background=CARD, anchor="ne")
+        self.progress = ProgressBar(canvas, animator, track=TRACK, fill=PRIMARY,
+                                    height=self.px(PROGRESS_HEIGHT))
+        self.detail = TextItem(canvas, animator, font=fonts["body"], color=MUTED, background=CARD, anchor="nw")
+        self.summary = SegmentRow(canvas, animator, font=fonts["body"], background=CARD, separator_color=MUTED)
 
-        progress_info = tk.Frame(card, bg=CARD)
-        progress_info.pack(fill="x", pady=(28, 0))
-        self.progress_stage = tk.Label(
-            progress_info,
-            text="Ожидание",
-            bg=CARD,
-            fg=INK,
-            anchor="w",
-            font=("TkDefaultFont", 10, "bold"),
-        )
-        self.progress_stage.pack(side="left")
-        self.progress_time = tk.Label(
-            progress_info,
-            text="",
-            bg=CARD,
-            fg=MUTED,
-            anchor="e",
-            font=("TkDefaultFont", 10),
-        )
-        self.progress_time.pack(side="right")
+        self.title.set("MedMask", animate=False)
+        self.subtitle.set("Обезличивание медицинских документов", animate=False)
+        self.version.set(__version__, animate=False)
+        self.folder_label.set("Папка", animate=False)
+        self.folder_path.set("не выбрана", FAINT, animate=False)
+        self.stage.set("Ожидание", MUTED, animate=False)
 
-        self.progress = ttk.Progressbar(
-            card,
-            mode="determinate",
-            maximum=100,
-            style="MedMask.Horizontal.TProgressbar",
-        )
-        self.progress.pack(fill="x", pady=(8, 12))
+        canvas.bind("<Configure>", lambda _event: self._layout())
 
-        self.status = tk.Label(
-            card,
-            text="",
-            bg=CARD,
-            fg=MUTED,
-            justify="left",
-            anchor="nw",
-            wraplength=590,
-            font=("TkDefaultFont", 10),
-        )
-        self.status.pack(fill="both", expand=True)
+    def _layout(self) -> int:
+        fonts = self.fonts
+        px = self.px
+        pad = px(PAD)
+        card_pad = px(CARD_PAD)
+        width = max(self.canvas.winfo_width(), px(MIN_WIDTH))
+        rise = self.rise
+        line = lambda name: fonts[name].metrics("linespace")
+
+        y = pad + rise
+        self.title.place(pad, y)
+        self.version.place(width - pad, y + px(9))
+        y += line("title") + px(4)
+        self.subtitle.place(pad, y)
+        y += line("subtitle") + px(24)
+
+        card_top = y
+        left = pad + card_pad
+        right = width - pad - card_pad
+        self.content_width = right - left
+
+        y += card_pad
+        self.folder_label.place(left, y)
+        y += line("label") + px(4)
+        self.folder_path.place(left, y)
+        self._refresh_path()
+        y += line("path") + px(20)
+
+        x = left
+        for button in (self.choose_button, self.run_button, self.open_button):
+            button.place(x, y)
+            x += button.width + px(10)
+        y += self.run_button.height + px(22)
+
+        self.canvas.coords(self.hairline, left, y + 0.5, right, y + 0.5)
+        y += px(21)
+
+        self.stage.place(left, y)
+        self.meta.place(right, y + px(1))
+        y += line("stage") + px(13)
+
+        self.progress.place(left, y, right - left)
+        y += self.progress.height + px(15)
+
+        self.detail.place(left, y)
+        self._refresh_detail()
+        y += line("body") + px(6)
+
+        self.summary.place(left, y)
+        y += line("body")
+
+        # снизу текст занимает меньше, чем строка, поэтому отступ чуть меньше
+        card_bottom = y + card_pad - px(5)
+        self.card.place(pad, card_top, width - pad, card_bottom)
+        return int(card_bottom - rise + pad)
+
+    def _place_window(self, width: int, height: int) -> None:
+        self.root.update_idletasks()
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, int((screen_height - height) / 2.6))
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _intro(self) -> None:
+        try:
+            self.root.attributes("-alpha", 0.0)
+            self.animator.run(
+                "window",
+                0.26,
+                lambda position: self.root.attributes("-alpha", position),
+            )
+            # страховка: окно не должно остаться прозрачным, если переход сорвется
+            self.root.after(700, lambda: self.root.attributes("-alpha", 1.0))
+        except tk.TclError:
+            pass
+
+        start = self.px(14)
+
+        def rise(position: float) -> None:
+            self.rise = start * (1 - position)
+            self._layout()
+
+        self.animator.run("rise", 0.5, rise)
+
+    # ---------- цикл ----------
+
+    def _tick(self) -> None:
+        try:
+            while True:
+                kind, payload = self.events.get_nowait()
+                if kind == "progress":
+                    self._show_progress(payload)  # type: ignore[arg-type]
+                elif kind == "scan":
+                    self._show_scan(payload)  # type: ignore[arg-type]
+                elif kind == "done":
+                    self._show_done(payload)  # type: ignore[arg-type]
+                elif kind == "error":
+                    self._show_error(payload)  # type: ignore[arg-type]
+        except queue.Empty:
+            pass
+
+        delta = self.animator.tick()
+        moving = self.progress.update(delta)
+        if self.processing:
+            self._refresh_meta()
+        busy = moving or self.processing or self.animator.busy
+        self.root.after(16 if busy else 60, self._tick)
+
+    # ---------- выбор папки ----------
 
     def _select_from_arguments(self) -> None:
         if len(sys.argv) > 1:
@@ -221,31 +346,78 @@ class MedMaskApp:
     def _set_folder(self, path: Path) -> None:
         self.source_dir = path.resolve()
         self.output_dir = None
-        self.folder_title.configure(text="Папка выбрана")
-        self.folder_path.configure(text=str(self.source_dir))
-        self.status.configure(text="", fg=MUTED)
-        self.progress_stage.configure(text="Готово к запуску", fg=INK)
-        self.progress_time.configure(text="")
-        self.progress.configure(value=0)
-        self.run_button.configure(state="normal")
-        self.open_button.pack_forget()
+        self.last_progress = None
+        self._refresh_path(animate=True)
+        self.stage.set("Подсчет файлов", MUTED)
+        self.meta.set("")
+        self._set_detail("")
+        self.summary.set([])
+        self.progress.set_color(PRIMARY)
+        self.progress.set_value(0, immediate=True)
+        self.has_documents = False
+        self.run_button.set_enabled(False)
+        self.open_button.set_visible(False)
+        self.scan_token += 1
+        token = self.scan_token
+        threading.Thread(target=self._scan_worker, args=(self.source_dir, token), daemon=True).start()
+
+    def _scan_worker(self, path: Path, token: int) -> None:
+        try:
+            files, skipped = discover_files(path)
+        except OSError:
+            files, skipped = [], {}
+        self.events.put(("scan", (token, len(files), sum(skipped.values()))))
+
+    def _show_scan(self, payload: tuple[int, int, int]) -> None:
+        token, found, skipped = payload
+        if token != self.scan_token or self.processing:
+            return
+        if not found:
+            self.stage.set("Нет документов", WARNING)
+            self._set_detail("Поддерживаются PDF, изображения, DOCX, RTF, ODT, TXT и XLSX.")
+            self.run_button.set_enabled(False)
+            return
+        self.stage.set("Готово к запуску", INK)
+        parts = [f"{found} {plural(found, 'документ', 'документа', 'документов')}"]
+        if skipped:
+            parts.append(f"{skipped} без поддержки")
+        self._set_detail("  ·  ".join(parts))
+        self.has_documents = True
+        self.run_button.set_enabled(True)
+
+    def _refresh_path(self, animate: bool = False) -> None:
+        if self.source_dir is None:
+            self.folder_path.set("не выбрана", FAINT, animate=animate)
+            return
+        text = truncate_middle(str(self.source_dir), self.fonts["path"], self.content_width)
+        self.folder_path.set(text, INK, animate=animate)
+
+    def _set_detail(self, text: str, color: str = MUTED, animate: bool = True) -> None:
+        self.detail_text = text
+        self.detail_color = color
+        self._refresh_detail(animate=animate)
+
+    def _refresh_detail(self, animate: bool = False) -> None:
+        text = truncate_middle(self.detail_text, self.fonts["body"], self.content_width)
+        self.detail.set(text, self.detail_color, animate=animate)
+
+    # ---------- обработка ----------
 
     def _start(self) -> None:
-        if self.source_dir is None:
+        if self.source_dir is None or self.processing:
             return
-        self.choose_button.configure(state="disabled")
-        self.run_button.configure(state="disabled")
-        self.open_button.pack_forget()
         self.processing = True
         self.started_at = time.monotonic()
         self.last_progress = None
-        self.progress.configure(mode="indeterminate", value=0)
-        self.progress.start(12)
-        self.progress_stage.configure(text="Поиск документов", fg=INK)
-        self.progress_time.configure(text=f"{self.ACTIVITY_FRAMES[0]}  00:00")
-        self.status.configure(text="Подготовка…", fg=MUTED)
-        worker = threading.Thread(target=self._run_worker, args=(self.source_dir,), daemon=True)
-        worker.start()
+        self.choose_button.set_enabled(False)
+        self.run_button.set_enabled(False)
+        self.open_button.set_visible(False)
+        self.progress.set_color(PRIMARY)
+        self.progress.start_scan()
+        self.stage.set("Поиск документов", INK)
+        self._set_detail("")
+        self.summary.set([])
+        threading.Thread(target=self._run_worker, args=(self.source_dir,), daemon=True).start()
 
     def _run_worker(self, source_dir: Path) -> None:
         try:
@@ -254,104 +426,68 @@ class MedMaskApp:
                 on_progress=lambda progress: self.events.put(("progress", progress)),
             )
             self.events.put(("done", result))
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 — окно показывает любую ошибку
             self.events.put(("error", error))
-
-    def _poll_events(self) -> None:
-        try:
-            while True:
-                kind, payload = self.events.get_nowait()
-                if kind == "progress":
-                    self._show_progress(payload)  # type: ignore[arg-type]
-                elif kind == "done":
-                    self._show_done(payload)  # type: ignore[arg-type]
-                elif kind == "error":
-                    self._show_error(payload)  # type: ignore[arg-type]
-        except queue.Empty:
-            pass
-        self._refresh_elapsed()
-        self.root.after(100, self._poll_events)
 
     def _show_progress(self, progress: Progress) -> None:
         self.last_progress = progress
-        self.progress.stop()
-        self.progress.configure(mode="determinate")
-        self.progress.configure(value=progress.percent)
-        self.progress_stage.configure(text=progress.stage, fg=INK)
-        file_number = min(progress.completed + 1, progress.total)
-        lines = [f"Файл {file_number} из {progress.total}: {progress.current_name}"]
-        if progress.detail:
-            lines.append(progress.detail)
-        self.status.configure(
-            text="\n".join(lines),
-            fg=MUTED,
-        )
-        self._refresh_elapsed()
+        self.progress.set_value(progress.percent)
+        self.stage.set(progress.stage, INK)
+        number = min(progress.completed + 1, progress.total)
+        self._set_detail(f"{number} из {progress.total}  ·  {progress.current_name}", MUTED, animate=False)
+        self.summary.set([(progress.detail, FAINT)] if progress.detail else [])
 
     def _elapsed(self) -> str:
         seconds = 0 if self.started_at is None else int(time.monotonic() - self.started_at)
         minutes, seconds = divmod(seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
-    def _refresh_elapsed(self) -> None:
-        if not self.processing:
-            return
-        elapsed = self._elapsed()
-        started_at = self.started_at or time.monotonic()
-        frame = self.ACTIVITY_FRAMES[int((time.monotonic() - started_at) * 4) % len(self.ACTIVITY_FRAMES)]
-        if self.last_progress is None:
-            self.progress_time.configure(text=f"{frame}  {elapsed}")
-        else:
-            self.progress_time.configure(
-                text=f"{frame}  {self.last_progress.percent}%  ·  {elapsed}"
-            )
+    def _refresh_meta(self) -> None:
+        percent = self.last_progress.percent if self.last_progress else 0
+        self.meta.set(f"{percent:>3d}%   {self._elapsed()}", MUTED, animate=False)
 
     def _show_done(self, result: BatchResult) -> None:
         self.output_dir = result.output_dir
         elapsed = self._elapsed()
         self.processing = False
-        self.progress.stop()
-        self.progress.configure(mode="determinate", value=100)
-        self.progress_stage.configure(text="Готово", fg=ACCENT)
-        self.progress_time.configure(text=f"100%  ·  {elapsed}")
-        self.choose_button.configure(state="normal")
-        self.run_button.configure(state="normal")
-        self.open_button.pack(side="left", padx=(12, 0))
+        self.progress.set_value(100)
+        self.progress.set_color(DANGER if not result.successful else SUCCESS if not result.needs_review else WARNING)
+        self.stage.set("Готово" if result.successful else "Ничего не создано", SUCCESS if result.successful else DANGER)
+        self.meta.set(f"100%   {elapsed}", MUTED, animate=False)
+        self.choose_button.set_enabled(True)
+        self.run_button.set_enabled(self.has_documents)
+        self.open_button.reveal()
 
-        review = result.needs_review
-        skipped = sum(result.skipped_by_extension.values())
-        lines = [
-            f"Создано PDF: {result.successful}.",
-            f"Результат: {result.output_dir}",
+        self._set_detail(str(result.output_dir), TEXT)
+
+        segments: list[tuple[str, str]] = [
+            (f"{result.successful} {plural(result.successful, 'файл', 'файла', 'файлов')}", INK)
         ]
         if result.recognized_with_ocr:
-            lines.append(f"OCR применён к документам: {result.recognized_with_ocr}.")
+            segments.append((f"OCR {result.recognized_with_ocr}", MUTED))
+        if result.needs_review:
+            segments.append((f"проверить {len(result.needs_review)}", WARNING))
         if result.failed:
-            lines.append(f"Не удалось обработать: {result.failed}.")
-            errors = sorted({item.error for item in result.files if item.error})
-            if errors:
-                lines.append(f"Причина: {'; '.join(errors)}.")
-        if review:
-            lines.append(f"Требуют проверки: {len(review)}. Подробности находятся в _ОТЧЁТ.txt.")
+            segments.append((f"с ошибкой {result.failed}", DANGER))
+        skipped = sum(result.skipped_by_extension.values())
         if skipped:
-            lines.append(f"Неподдерживаемых файлов пропущено: {skipped}.")
-        color = ERROR if result.successful == 0 else WARNING if review else ACCENT
-        self.status.configure(text="\n".join(lines), fg=color)
+            segments.append((f"пропущено {skipped}", FAINT))
+        self.summary.set(segments)
 
     def _show_error(self, error: Exception) -> None:
         self.processing = False
-        self.progress.stop()
-        self.choose_button.configure(state="normal")
-        self.run_button.configure(state="normal" if self.source_dir else "disabled")
-        self.progress.configure(mode="determinate", value=0)
-        self.progress_stage.configure(text="Ошибка", fg=ERROR)
-        self.progress_time.configure(text=self._elapsed())
+        self.progress.set_value(self.progress.value, immediate=True)
+        self.progress.set_color(DANGER)
+        self.choose_button.set_enabled(True)
+        self.run_button.set_enabled(self.has_documents)
+        self.stage.set("Ошибка", DANGER)
+        self.meta.set(self._elapsed(), MUTED, animate=False)
         if isinstance(error, MedMaskError):
             message = str(error)
         else:
             message = "Не удалось завершить обработку. Исходные файлы не изменены."
-        self.status.configure(text=message, fg=ERROR)
-        messagebox.showerror("MedMask", message, parent=self.root)
+        self._set_detail(message, DANGER)
+        self.summary.set([])
 
     def _open_result(self) -> None:
         if self.output_dir is not None and self.output_dir.exists():

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "medmask"
-version = "1.1.1"
+dynamic = ["version"]
 description = "Локальное обезличивание медицинских документов"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,5 +31,8 @@ medmask = "medmask.app:main"
 [tool.setuptools]
 packages = ["medmask"]
 
+[tool.setuptools.dynamic]
+version = { attr = "medmask.__version__" }
+
 [tool.setuptools.package-data]
-medmask = ["assets/*.onnx"]
+medmask = ["assets/*.onnx", "assets/*.ttf"]

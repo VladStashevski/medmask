@@ -12,3 +12,15 @@ Bundled model checksums:
 - `PP-OCRv6_det_small.onnx`: `090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f`
 - `ch_ppocr_mobile_v2.0_cls_mobile.onnx`: `e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c`
 - `cyrillic_PP-OCRv5_rec_mobile.onnx`: `90f761b4bfcce0c8c561c0cb5c887b0971d3ec01c32164bdf7374a35b0982711`
+
+# Bundled font
+
+MedMask includes Liberation Sans 2.1.5 (`LiberationSans-Regular.ttf`) so that
+output PDFs do not depend on fonts installed in the operating system.
+
+- Liberation Fonts: https://github.com/liberationfonts/liberation-fonts
+- License: SIL Open Font License, Version 1.1
+- Copyright (c) 2012 Red Hat, Inc. with Reserved Font Name Liberation;
+  digitized data copyright (c) 2010 Google Corporation with Reserved Font Name
+  Arimo, Tinos and Cousine.
+- `LiberationSans-Regular.ttf`: `76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8`

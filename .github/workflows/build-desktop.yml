@@ -20,10 +20,12 @@ jobs:
           - name: Windows x64
             os: windows-latest
             artifact: MedMask-Windows-x64
-            path: dist/MedMask-Windows-x64.exe
+            application: dist/MedMask/MedMask.exe
+            path: dist/MedMask-Windows-x64.zip
           - name: macOS
             os: macos-14
             artifact: MedMask-macOS
+            application: dist/MedMask.app/Contents/MacOS/MedMask
             path: dist/MedMask-macOS.zip
 
     runs-on: ${{ matrix.os }}
@@ -41,23 +43,26 @@ jobs:
       - name: Test
         run: python -m pytest
 
-      - name: Build Windows
+      - name: Build
+        run: pyinstaller --noconfirm --clean MedMask.spec
+
+      - name: Sign macOS bundle
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - dist/MedMask.app
+
+      # Проверяем именно собранный артефакт: так видно, попали ли в сборку
+      # модели OCR и шрифт и работает ли приложение без Python.
+      - name: Smoke test
+        run: python scripts/smoke_test.py "${{ matrix.application }}"
+
+      - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --additional-hooks-dir hooks --collect-data medmask --name MedMask main.py
-          Move-Item dist\MedMask.exe dist\MedMask-Windows-x64.exe
+        run: Compress-Archive -Path dist\MedMask -DestinationPath dist\MedMask-Windows-x64.zip
 
-      - name: Build macOS
+      - name: Package macOS
         if: runner.os == 'macOS'
-        env:
-          MEDMASK_VERSION: ${{ github.ref_name }}
-        run: |
-          pyinstaller --noconfirm --clean --windowed --additional-hooks-dir hooks --collect-data medmask --name MedMask --osx-bundle-identifier ru.medmask.local main.py
-          version="${MEDMASK_VERSION#v}"
-          plutil -replace CFBundleShortVersionString -string "$version" dist/MedMask.app/Contents/Info.plist
-          codesign --force --deep --sign - dist/MedMask.app
-          ditto -c -k --sequesterRsrc --keepParent dist/MedMask.app dist/MedMask-macOS.zip
+        run: ditto -c -k --sequesterRsrc --keepParent dist/MedMask.app dist/MedMask-macOS.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -71,6 +76,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the package version
+        run: |
+          version="$(python3 -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('medmask/__init__.py').read_text()).group(1))")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Тег $GITHUB_REF_NAME не совпадает с версией пакета $version" >&2
+            exit 1
+          fi
+
       - uses: actions/download-artifact@v4
         with:
           pattern: MedMask-*
@@ -84,4 +100,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "MedMask $GITHUB_REF_NAME" \
-            --notes "Автономный локальный инструмент с офлайн-OCR для PDF-сканов и изображений. Python и интернет не требуются. Исходные документы не изменяются."
+            --notes "Автономный локальный инструмент с офлайн-OCR для PDF-сканов и изображений. Python и интернет не требуются. Исходные документы не изменяются. Windows: распакуйте архив и запустите MedMask.exe. macOS: распакуйте и перенесите MedMask.app в «Программы»."

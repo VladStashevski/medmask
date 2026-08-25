@@ -5,23 +5,20 @@ cd "$(dirname "$0")/.."
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 BUILD_ENV=".venv-build"
-VERSION="${MEDMASK_VERSION:-1.1.1}"
 
 "$PYTHON_BIN" -m venv "$BUILD_ENV"
 "$BUILD_ENV/bin/python" -m pip install --upgrade pip
 "$BUILD_ENV/bin/python" -m pip install ".[build]"
-"$BUILD_ENV/bin/pyinstaller" \
-  --noconfirm \
-  --clean \
-  --windowed \
-  --additional-hooks-dir hooks \
-  --collect-data medmask \
-  --name MedMask \
-  --osx-bundle-identifier ru.medmask.local \
-  main.py
+"$BUILD_ENV/bin/pyinstaller" --noconfirm --clean MedMask.spec
 
-plutil -replace CFBundleShortVersionString -string "$VERSION" dist/MedMask.app/Contents/Info.plist
 codesign --force --deep --sign - dist/MedMask.app
 
+"$BUILD_ENV/bin/python" scripts/smoke_test.py dist/MedMask.app/Contents/MacOS/MedMask
+
+VERSION="$("$BUILD_ENV/bin/python" -c 'import medmask; print(medmask.__version__)')"
+ARCHIVE="dist/MedMask-macOS-$VERSION.zip"
+rm -f "$ARCHIVE"
+ditto -c -k --sequesterRsrc --keepParent dist/MedMask.app "$ARCHIVE"
+
 echo
-echo "Готово: dist/MedMask.app"
+echo "Готово: $ARCHIVE"

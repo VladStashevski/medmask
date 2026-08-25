@@ -14,6 +14,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Консоль Windows по умолчанию не в UTF-8, и кириллица в сообщениях роняет
+# скрипт с UnicodeEncodeError уже после успешной проверки.
+for _stream in (sys.stdout, sys.stderr):
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "smoke"
 PERSONAL_DATA = (

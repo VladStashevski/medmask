@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import Any
 
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
+MAX_IMAGE_SIDE = 2200
+CPU_THREADS = max(1, min(4, os.cpu_count() or 1))
 MODEL_HASHES = {
     "PP-OCRv6_det_small.onnx": "090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f",
     "ch_ppocr_mobile_v2.0_cls_mobile.onnx": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
@@ -87,7 +90,12 @@ def _get_engine():
                 params={
                     "Global.log_level": "error",
                     "Global.text_score": 0.35,
-                    "Global.max_side_len": 2200,
+                    "Global.max_side_len": MAX_IMAGE_SIDE,
+                    # У RapidOCR три отдельные ONNX-сессии. Автоматическое
+                    # значение создаёт по пулу на все ядра для каждой сессии и
+                    # мешает параллельной обработке документов.
+                    "EngineConfig.onnxruntime.intra_op_num_threads": CPU_THREADS,
+                    "EngineConfig.onnxruntime.inter_op_num_threads": 1,
                     "Det.engine_type": EngineType.ONNXRUNTIME,
                     "Det.model_type": ModelType.SMALL,
                     "Det.ocr_version": OCRVersion.PPOCRV6,

@@ -344,6 +344,9 @@ class Button:
         self.command = command
         self.style = style
         self.background = background
+        self.font = font
+        self.padding = padding
+        self.text = text
         self.enabled = True
         self.visible = True
         self._hovered = False
@@ -366,6 +369,20 @@ class Button:
     def place(self, x: float, y: float) -> None:
         self._origin = (x, y)
         self._redraw()
+
+    def set_text(self, text: str) -> None:
+        if text == self.text:
+            return
+        self.text = text
+        self.width = self.font.measure(text) + self.padding * 2
+        self.canvas.itemconfigure(self.label, text=text)
+        self._redraw()
+
+    def set_style(self, style: dict[str, str]) -> None:
+        if style is self.style:
+            return
+        self.style = style
+        self._animate_colors()
 
     def _redraw(self) -> None:
         x, y = self._origin

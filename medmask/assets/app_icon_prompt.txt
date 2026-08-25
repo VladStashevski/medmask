@@ -1,0 +1,7 @@
+Use case: logo-brand
+Asset type: final production desktop application icon source for macOS and Windows
+Primary request: original MedMask icon for an offline medical-document privacy and redaction application. One cohesive centered symbol: a white protective shield outline containing a simple white medical plus and a bold horizontal masking/redaction bar below it.
+Style/medium: crisp minimal vector-like raster, flat geometric shapes, excellent silhouette at 16 px, professional and trustworthy healthcare privacy software.
+Composition/framing: perfectly centered, front-facing, generous safe margin around the shield. The blue background must be FULL BLEED to all four exact square image edges and all four corners; do not draw an outer rounded-square container, border, margin, checkerboard, whitespace, transparency preview, or drop shadow outside the symbol.
+Color palette: blue #2563EB full-bleed background, white symbol, optionally a subtle second-blue tonal division inside the shield; no red.
+Constraints: square image; no text, no letters, no people, no faces, no document content, no tiny details, no photorealism, no mockup, no device frame, no watermark, no trademarked symbols; clean high-contrast edges and readable when downscaled.

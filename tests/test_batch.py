@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -387,6 +388,29 @@ def test_progress_moves_during_a_single_document(tmp_path: Path) -> None:
     assert any(update.stage == "Создание нового PDF" for update in updates)
     assert any(update.stage == "Проверка результата" for update in updates)
     assert [update.percent for update in updates] == sorted(update.percent for update in updates)
+
+
+def test_cancellation_removes_partial_output_and_keeps_source(tmp_path: Path) -> None:
+    source_dir = tmp_path / "Истории"
+    source_dir.mkdir()
+    source_file = source_dir / "карта.txt"
+    original = "Пациент: Иванов Иван Иванович\nДиагноз: тест"
+    source_file.write_text(original, encoding="utf-8")
+    cancelled = threading.Event()
+
+    def update(progress: batch.Progress) -> None:
+        if progress.stage == "Обезличивание текста":
+            cancelled.set()
+
+    with pytest.raises(batch.BatchCancelled):
+        batch.process_folder(
+            source_dir,
+            on_progress=update,
+            is_cancelled=cancelled.is_set,
+        )
+
+    assert source_file.read_text(encoding="utf-8") == original
+    assert not (tmp_path / batch.OUTPUT_FOLDER_NAME).exists()
 
 
 def test_pdf_progress_reports_pages(tmp_path: Path) -> None:

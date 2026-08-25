@@ -21,6 +21,7 @@ import sys
 import glob
 import zipfile
 import xml.etree.ElementTree as ET
+from contextvars import ContextVar
 from datetime import datetime, date
 import hashlib
 import unicodedata
@@ -42,10 +43,15 @@ except ImportError:
     except ImportError:
         fitz = None
 
-try:
-    import openpyxl  # чтение xlsx/xlsm
-except ImportError:
-    openpyxl = None
+
+def _load_openpyxl():
+    """openpyxl тянет за собой numpy и стоит заметного времени при импорте,
+    а нужен только для xlsx/xlsm. Поэтому загружаем его при первом чтении."""
+    try:
+        import openpyxl
+    except ImportError:
+        return None
+    return openpyxl
 
 
 INPUT_DIR = "Карты"
@@ -144,6 +150,7 @@ _XLSX_CELL_SEP = "    "
 
 
 def read_xlsx(path: str) -> str:
+    openpyxl = _load_openpyxl()
     if openpyxl is None:
         raise RuntimeError("Для xlsx нужен openpyxl. Установите: pip install openpyxl")
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
@@ -730,12 +737,13 @@ STUDY_BLOCK_STOP_RE = re.compile(
 )
 
 
-def mark_study_regions(lines) -> set:
+def mark_study_regions(lines, normalized_lines=None) -> set:
     """Индексы строк, относящихся к блоку результатов исследований."""
+    if normalized_lines is None:
+        normalized_lines = [norm(line).strip() for line in lines]
     protected = set()
     active = False
-    for idx, raw in enumerate(lines):
-        s = norm(raw).strip()
+    for idx, s in enumerate(normalized_lines):
         if not s:
             if active:
                 protected.add(idx)
@@ -753,13 +761,12 @@ def mark_study_regions(lines) -> set:
     # Даже без шапки таблицы: строка с названием исследования и её соседи
     # (там же лежит фамилия подтвердившего и инициалы «Н.В.»).
     n = len(lines)
-    for idx, raw in enumerate(lines):
-        s = norm(raw).strip()
+    for idx, s in enumerate(normalized_lines):
         if not s or not STUDY_NAME_LINE_RE.search(s):
             continue
         protected.add(idx)
         for k in (idx - 1, idx + 1):
-            if 0 <= k < n and not STUDY_BLOCK_STOP_RE.search(norm(lines[k])):
+            if 0 <= k < n and not STUDY_BLOCK_STOP_RE.search(normalized_lines[k]):
                 protected.add(k)
     return protected
 
@@ -1043,16 +1050,20 @@ class PIIMemory:
         long_toks = sorted((t for t in sweepable if len(t) >= 6), key=len, reverse=True)
         short_toks = sorted((t for t in sweepable if 4 <= len(t) < 6), key=len, reverse=True)
 
-        def _mask_line(line: str) -> str:
-            for tok in long_toks:
-                esc = re.escape(tok.capitalize())
-                line = re.sub(rf"(?i)\b{esc}[а-яёА-ЯЁ]{{0,3}}\b", "[FIO]", line)
-            for tok in short_toks:
-                esc = re.escape(tok.capitalize())
-                line = re.sub(rf"(?i)\b{esc}\b", "[FIO]", line)
-            return line
-
-        text = "\n".join(_mask_line(line) for line in text.split("\n"))
+        if long_toks:
+            alternatives = "|".join(re.escape(token) for token in long_toks)
+            text = re.sub(
+                rf"(?i)\b(?:{alternatives})[а-яёА-ЯЁ]{{0,3}}\b",
+                "[FIO]",
+                text,
+            )
+        if short_toks:
+            alternatives = "|".join(re.escape(token) for token in short_toks)
+            text = re.sub(
+                rf"(?i)\b(?:{alternatives})\b",
+                "[FIO]",
+                text,
+            )
         text = re.sub(r"\[FIO\]\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.", "[FIO]", text)
 
         def _mask_name_tail(match: re.Match) -> str:
@@ -1124,27 +1135,31 @@ class PIIMemory:
         return text
 
 
-_MEM = None
+_MEM: ContextVar[PIIMemory | None] = ContextVar("medmask_pii_memory", default=None)
 
 
 def _remember_fio(value: str):
-    if _MEM is not None and value:
-        _MEM.add_fio(value)
+    memory = _MEM.get()
+    if memory is not None and value:
+        memory.add_fio(value)
 
 
 def _remember_fio_strict(value: str):
-    if _MEM is not None and value:
-        _MEM.add_fio_strict(value)
+    memory = _MEM.get()
+    if memory is not None and value:
+        memory.add_fio_strict(value)
 
 
 def _remember_dob(value: str):
-    if _MEM is not None and value:
-        _MEM.add_dob(value)
+    memory = _MEM.get()
+    if memory is not None and value:
+        memory.add_dob(value)
 
 
 def _remember_record(value: str):
-    if _MEM is not None and value:
-        _MEM.add_record(value)
+    memory = _MEM.get()
+    if memory is not None and value:
+        memory.add_record(value)
 
 
 def _mask_fio_unless_org(rx: re.Pattern, s: str) -> str:
@@ -1253,10 +1268,10 @@ _date_only_line_re = re.compile(r"^\s*\d{1,2}\s*[.\-/]\s*\d{1,2}\s*[.\-/]\s*\d{4
 _signature_label_only_re = re.compile(r"(?i)^\s*подпис\w*\s*[:\-]?\s*$")
 
 
-def has_doctor_context_above(lines, idx, window: int = 6) -> bool:
+def has_doctor_context_above(lines, idx, window: int = 6, normalized_lines=None) -> bool:
     found_nonempty = 0
     for k in range(idx - 1, max(-1, idx - 1 - window), -1):
-        s = norm(lines[k]).strip()
+        s = normalized_lines[k] if normalized_lines is not None else norm(lines[k]).strip()
         if not s:
             continue
         if _date_only_line_re.match(s) or _signature_label_only_re.match(s):
@@ -1282,9 +1297,9 @@ def has_doctor_context_above(lines, idx, window: int = 6) -> bool:
     return False
 
 
-def has_doctor_context_below(lines, idx, window: int = 5) -> bool:
+def has_doctor_context_below(lines, idx, window: int = 5, normalized_lines=None) -> bool:
     for k in range(idx + 1, min(len(lines), idx + 1 + window)):
-        s = norm(lines[k]).strip()
+        s = normalized_lines[k] if normalized_lines is not None else norm(lines[k]).strip()
         if not s or _date_only_line_re.match(s):
             continue
         if re.search(r"(?i)подпис", s) and DOCTOR_CONTEXT_RE.search(s):
@@ -1312,9 +1327,13 @@ def has_doctor_context_below(lines, idx, window: int = 5) -> bool:
     return False
 
 
-def is_header_block_above(lines, idx, window=10) -> bool:
+def is_header_block_above(lines, idx, window=10, normalized_lines=None) -> bool:
     start = max(0, idx - window)
-    block = letters_only(" ".join(norm(lines[k]) for k in range(start, idx + 1)))
+    source = normalized_lines if normalized_lines is not None else lines
+    block = letters_only(" ".join(
+        source[k] if normalized_lines is not None else norm(source[k])
+        for k in range(start, idx + 1)
+    ))
     return (
         "медицинскаякартпациента" in block
         and "стационарныхусловиях" in block
@@ -1322,15 +1341,20 @@ def is_header_block_above(lines, idx, window=10) -> bool:
     )
 
 
-def has_medical_card_header_above(lines, idx, window: int = 6) -> bool:
+def has_medical_card_header_above(lines, idx, window: int = 6, normalized_lines=None) -> bool:
     start = max(0, idx - window)
-    block = letters_only(" ".join(norm(lines[k]) for k in range(start, idx)))
+    source = normalized_lines if normalized_lines is not None else lines
+    block = letters_only(" ".join(
+        source[k] if normalized_lines is not None else norm(source[k])
+        for k in range(start, idx)
+    ))
     return "медицинскаякарт" in block
 
 
-def has_passport_context(lines, idx, window=1) -> bool:
+def has_passport_context(lines, idx, window=1, lower_lines=None) -> bool:
     for k in range(max(0, idx - window), min(len(lines), idx + window + 1)):
-        if passport_context_line_re.search(_normline(lines[k])):
+        low = lower_lines[k] if lower_lines is not None else _normline(lines[k])
+        if passport_context_line_re.search(low):
             return True
     return False
 
@@ -1343,13 +1367,13 @@ def is_card_number_line(line: str) -> bool:
     return bool(match and digits_count(match.group(2)) >= 3)
 
 
-def is_table_dob_context(lines, idx, window=4) -> bool:
+def is_table_dob_context(lines, idx, window=4, lower_lines=None) -> bool:
     start = max(0, idx - window)
     end = min(len(lines), idx + window + 1)
     for k in range(start, end):
         if k == idx:
             continue
-        low = _normline(lines[k])
+        low = lower_lines[k] if lower_lines is not None else _normline(lines[k])
         if not low:
             continue
         for kw in TABLE_DOB_NEIGHBOR_KEYWORDS:
@@ -1368,23 +1392,28 @@ STUDY_SIGNATURE_CTX_RE = re.compile(
 )
 
 
-def has_study_signature_context(lines, idx, window=4) -> bool:
+def has_study_signature_context(lines, idx, window=4, lower_lines=None) -> bool:
     start = max(0, idx - window)
     end = min(len(lines), idx + window + 1)
     for k in range(start, end):
-        if STUDY_SIGNATURE_CTX_RE.search(_normline(lines[k])):
+        low = lower_lines[k] if lower_lines is not None else _normline(lines[k])
+        if STUDY_SIGNATURE_CTX_RE.search(low):
             return True
     return False
 
 
-def match_label_span(lines, i, label_re, max_join: int = 3) -> int:
+def match_label_span(lines, i, label_re, max_join: int = 3, normalized_lines=None) -> int:
     for n in range(1, max_join + 1):
         if i + n > len(lines):
             break
         parts = []
         good = True
         for k in range(n):
-            s = norm(lines[i + k]).strip()
+            s = (
+                normalized_lines[i + k]
+                if normalized_lines is not None
+                else norm(lines[i + k]).strip()
+            )
             if not s:
                 good = False
                 break
@@ -1422,10 +1451,10 @@ VALUE_BLOCK_STOP_RE = re.compile(
 NUMBERED_ITEM_RE = re.compile(r"^\s*\d+\s*[.)]\s*\S")
 
 
-def consume_value_block(lines, start_idx: int, max_lines: int = 30) -> int:
+def consume_value_block(lines, start_idx: int, max_lines: int = 30, normalized_lines=None) -> int:
     j = start_idx
     while j < len(lines) and (j - start_idx) < max_lines:
-        s = norm(lines[j]).strip()
+        s = normalized_lines[j] if normalized_lines is not None else norm(lines[j]).strip()
         if not s:
             break
         if s.endswith(":"):
@@ -1827,20 +1856,34 @@ def clean_line_single(
 # ==================== ОСНОВНАЯ ДЕПЕРСОНАЛИЗАЦИЯ ====================
 
 def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True) -> str:
-    global _MEM
-    _MEM = mem if mem is not None else PIIMemory()
+    """Обезличивает текст в изолированном контексте текущего задания.
+
+    ContextVar не допускает смешивания ФИО между параллельными документами и
+    гарантированно освобождает ссылку на ПДн даже при исключении.
+    """
+    active_memory = mem if mem is not None else PIIMemory()
+    token = _MEM.set(active_memory)
+    try:
+        return _depersonalize(text, active_memory, sweep)
+    finally:
+        _MEM.reset(token)
+
+
+def _depersonalize(text: str, mem: PIIMemory, sweep: bool) -> str:
 
     text = normalize_quoted_dates(norm(text))
     _remember_contextual_identifiers(text)
     lines = text.splitlines(keepends=True)
-    study_idx = mark_study_regions(lines)
+    normalized_lines = [norm(line).strip() for line in lines]
+    lower_lines = [re.sub(r"\s+", " ", line).lower() for line in normalized_lines]
+    study_idx = mark_study_regions(lines, normalized_lines)
     out = []
     i = 0
     n = len(lines)
 
     def _consume_value_line(start_idx: int):
         j = start_idx
-        while j < n and _normline(lines[j]) == "":
+        while j < n and lower_lines[j] == "":
             out.append(lines[j])
             j += 1
         if j >= n:
@@ -1856,15 +1899,19 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
         if not _line_ending(lines[i + label_span - 1]):
             out[-1] = out[-1] + "\n"
         out.append(tag + end)
-        return consume_value_block(lines, i + label_span)
+        return consume_value_block(lines, i + label_span, normalized_lines=normalized_lines)
 
     while i < n:
         line = lines[i]
-        stripped = _normline(line)
+        stripped = lower_lines[i]
         study_ctx = i in study_idx
-        passport_ctx = has_passport_context(lines, i)
-        doctor_ctx_above = has_doctor_context_above(lines, i)
-        doctor_ctx_below = has_doctor_context_below(lines, i)
+        passport_ctx = has_passport_context(lines, i, lower_lines=lower_lines)
+        doctor_ctx_above = has_doctor_context_above(
+            lines, i, normalized_lines=normalized_lines
+        )
+        doctor_ctx_below = has_doctor_context_below(
+            lines, i, normalized_lines=normalized_lines
+        )
         doctor_ctx = doctor_ctx_above or doctor_ctx_below
 
         if org_id_re.search(stripped):
@@ -1880,7 +1927,12 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
             continue
 
         if is_card_number_line(stripped) or (
-            (is_header_block_above(lines, i) or has_medical_card_header_above(lines, i))
+            (
+                is_header_block_above(lines, i, normalized_lines=normalized_lines)
+                or has_medical_card_header_above(
+                    lines, i, normalized_lines=normalized_lines
+                )
+            )
             and leading_record_value_re.match(stripped)
         ):
             end = _line_ending(line)
@@ -1900,7 +1952,13 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
             i += 1
             continue
 
-        span = match_label_span(lines, i, ADDRESS_LABEL_RE, max_join=3)
+        span = match_label_span(
+            lines,
+            i,
+            ADDRESS_LABEL_RE,
+            max_join=3,
+            normalized_lines=normalized_lines,
+        )
         if span:
             nxt = _emit_tag_and_consume_block(span, "[ADDRESS]")
             i = nxt
@@ -1910,7 +1968,7 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
         m_addr_top = ADDRESS_LABEL_INLINE_RE.match(norm(line[:-len(end_i)] if end_i else line))
         if m_addr_top:
             out.append(m_addr_top.group(1) + "[ADDRESS]" + (end_i or "\n"))
-            i = consume_value_block(lines, i + 1)
+            i = consume_value_block(lines, i + 1, normalized_lines=normalized_lines)
             continue
 
         if workplace_label_only_re.match(stripped):
@@ -2007,10 +2065,10 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
 
         if (
             bare_date_line_re.match(stripped)
-            and is_table_dob_context(lines, i)
-            and not has_study_signature_context(lines, i)
+            and is_table_dob_context(lines, i, lower_lines=lower_lines)
+            and not has_study_signature_context(lines, i, lower_lines=lower_lines)
         ):
-            m = bare_date_line_re.match(norm(line).strip())
+            m = bare_date_line_re.match(normalized_lines[i])
             d, mo, y = m.groups()
             end = _line_ending(line)
             age = calc_age_from_str(f"{int(d):02d}.{int(mo):02d}.{int(y):04d}")
@@ -2100,8 +2158,7 @@ def depersonalize(text: str, mem: "PIIMemory | None" = None, sweep: bool = True)
 
     text2 = strict_privacy_pass(text2)
     if sweep:
-        text2 = _MEM.sweep_fio(text2)
-    _MEM = None
+        text2 = mem.sweep_fio(text2)
 
     return sanitize_for_windows(text2)
 
@@ -2685,31 +2742,60 @@ def _find_cyrillic_font():
     return best_path
 
 
-def _wrap_line(line, font, fontsize, max_width):
+def _wrap_line(line, font, fontsize, max_width, width_cache=None):
+    """Переносит строку за линейное число измерений шрифта.
+
+    Старый вариант после каждого слова заново измерял всю растущую строку. На
+    длинных медицинских документах это превращалось в миллионы вызовов MuPDF.
+    Ширина строки для используемого PDF-шрифта аддитивна, поэтому достаточно
+    измерить каждое слово (и символ слишком длинного слова) один раз.
+    """
     line = line.rstrip()
     if not line:
         return [""]
+    cache = width_cache if width_cache is not None else {}
+
+    def text_width(value: str) -> float:
+        cached = cache.get(value)
+        if cached is None:
+            cached = font.text_length(value, fontsize)
+            cache[value] = cached
+        return cached
+
     result = []
     current = ""
+    current_width = 0.0
+    space_width = text_width(" ")
     for word in line.split(" "):
-        trial = word if current == "" else current + " " + word
-        if font.text_length(trial, fontsize) <= max_width:
-            current = trial
+        word_width = text_width(word)
+        trial_width = (
+            word_width if current == "" else current_width + space_width + word_width
+        )
+        if trial_width <= max_width:
+            current = word if current == "" else current + " " + word
+            current_width = trial_width
             continue
         if current:
             result.append(current)
             current = ""
-        if font.text_length(word, fontsize) > max_width:
+            current_width = 0.0
+        if word_width > max_width:
             chunk = ""
+            chunk_width = 0.0
             for ch in word:
-                if chunk == "" or font.text_length(chunk + ch, fontsize) <= max_width:
+                char_width = text_width(ch)
+                if chunk == "" or chunk_width + char_width <= max_width:
                     chunk += ch
+                    chunk_width += char_width
                 else:
                     result.append(chunk)
                     chunk = ch
+                    chunk_width = char_width
             current = chunk
+            current_width = chunk_width
         else:
             current = word
+            current_width = word_width
     if current:
         result.append(current)
     return result or [""]
@@ -2734,6 +2820,7 @@ def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0, on_progre
     fontname = "doc"
     leading = fontsize * 1.35
     out = fitz.open()
+    width_cache = {}
 
     total_lines = sum(max(1, len(text.split("\n"))) for text in page_texts)
     processed_lines = 0
@@ -2746,22 +2833,41 @@ def render_text_pdf(page_texts, page_rects, fontsize=9.0, margin=36.0, on_progre
 
         wrapped = []
         for line in text.split("\n"):
-            wrapped.extend(_wrap_line(line, font, fontsize, max_width))
+            wrapped.extend(
+                _wrap_line(
+                    line,
+                    font,
+                    fontsize,
+                    max_width,
+                    width_cache=width_cache,
+                )
+            )
             processed_lines += 1
             if on_progress and _should_report_progress(processed_lines, total_lines):
                 on_progress("render", processed_lines, total_lines)
 
         page = out.new_page(width=width, height=height)
         page.insert_font(fontname=fontname, fontfile=fontfile)
+        shape = page.new_shape()
+        shape_has_text = False
         y = margin + fontsize
         for line in wrapped:
             if y > bottom:
+                if shape_has_text:
+                    shape.commit()
                 page = out.new_page(width=width, height=height)
                 page.insert_font(fontname=fontname, fontfile=fontfile)
+                shape = page.new_shape()
+                shape_has_text = False
                 y = margin + fontsize
             if line:
-                page.insert_text((margin, y), line, fontname=fontname, fontsize=fontsize)
+                shape.insert_text(
+                    (margin, y), line, fontname=fontname, fontsize=fontsize
+                )
+                shape_has_text = True
             y += leading
+        if shape_has_text:
+            shape.commit()
 
     if out.page_count == 0:
         out.new_page()
@@ -2799,7 +2905,19 @@ def _needs_ocr(page, raw_text: str, has_images: bool) -> bool:
 
 
 def _ocr_page(page):
-    pixmap = page.get_pixmap(dpi=OCR_DPI, colorspace=fitz.csRGB, alpha=False)
+    # Изображение-файл PyMuPDF представляет страницей, размер которой зависит
+    # от числа исходных пикселей. Фиксированные 180 DPI могли сначала раздуть
+    # фотографию до десятков мегапикселей, после чего RapidOCR всё равно
+    # уменьшал её до Global.max_side_len. Сразу рендерим в конечный предел.
+    requested_scale = OCR_DPI / 72.0
+    longest_side = max(float(page.rect.width), float(page.rect.height), 1.0)
+    capped_scale = local_ocr.MAX_IMAGE_SIDE / longest_side
+    scale = min(requested_scale, capped_scale)
+    pixmap = page.get_pixmap(
+        matrix=fitz.Matrix(scale, scale),
+        colorspace=fitz.csRGB,
+        alpha=False,
+    )
     return local_ocr.recognize_pixmap(pixmap)
 
 

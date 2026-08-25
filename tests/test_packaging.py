@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from medmask import __version__
 from medmask import depersonalizer as engine
@@ -39,6 +40,18 @@ def test_package_data_includes_the_font() -> None:
     assert 'dynamic = ["version"]' in pyproject
 
 
+def test_application_icons_are_present_and_wired_into_the_build() -> None:
+    assets = ROOT / "medmask" / "assets"
+    for filename in ("app_icon.png", "app_icon.ico", "app_icon.icns"):
+        assert (assets / filename).is_file()
+    with Image.open(assets / "app_icon.png") as icon:
+        assert icon.size == (256, 256)
+    spec = (ROOT / "MedMask.spec").read_text(encoding="utf-8")
+    assert "app_icon.icns" in spec
+    assert "app_icon.ico" in spec
+    assert 'assets/app_icon.png' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize(
     "path",
     ["scripts/build_macos.command", "scripts/build_windows.ps1", "MedMask.spec"],
@@ -53,6 +66,18 @@ def test_spec_is_the_single_build_definition() -> None:
     workflow = (ROOT / ".github/workflows/build-desktop.yml").read_text(encoding="utf-8")
     assert "MedMask.spec" in workflow
     assert "smoke_test.py" in workflow
+
+
+def test_builds_use_the_tested_dependency_constraints() -> None:
+    constraints = (ROOT / "constraints.txt").read_text(encoding="utf-8")
+    assert "rapidocr==3.9.2" in constraints
+    assert "onnxruntime==1.28.0" in constraints
+    for path in (
+        "scripts/build_macos.command",
+        "scripts/build_windows.ps1",
+        ".github/workflows/build-desktop.yml",
+    ):
+        assert "constraints.txt" in (ROOT / path).read_text(encoding="utf-8")
 
 
 def test_spec_is_tracked_by_git() -> None:

@@ -1,0 +1,40 @@
+# Версии полного окружения, на котором проходят тесты, corpus benchmark и сборка.
+# Файл не добавляет зависимости: он фиксирует версии уже объявленных пакетов.
+altgraph==0.17.5
+antlr4-python3-runtime==4.9.3
+certifi==2026.7.22
+chardet==5.2.0
+charset-normalizer==3.5.1
+colorlog==6.12.0
+docx2txt==0.9
+et_xmlfile==2.0.0
+flatbuffers==25.12.19
+idna==3.19
+iniconfig==2.3.0
+macholib==1.16.4; sys_platform == "darwin"
+numpy==2.5.2
+omegaconf==2.3.1
+onnxruntime==1.28.0
+opencv-python==5.0.0.93
+openpyxl==3.1.5
+packaging==26.3
+pefile==2024.8.26; sys_platform == "win32"
+pillow==12.3.0
+pluggy==1.6.0
+protobuf==7.36.0
+pyclipper==1.4.0
+Pygments==2.21.0
+pyinstaller==6.22.2
+pyinstaller-hooks-contrib==2026.6
+pymupdf==1.28.2
+pytest==8.4.2
+pywin32-ctypes==0.2.3; sys_platform == "win32"
+PyYAML==6.0.3
+rapidocr==3.9.2
+requests==2.34.2
+setuptools==84.0.0
+shapely==2.1.2
+six==1.17.0
+striprtf==0.0.33
+tqdm==4.70.0
+urllib3==2.7.0

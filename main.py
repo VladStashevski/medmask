@@ -42,4 +42,9 @@ def run() -> int:
 
 
 if __name__ == "__main__":
+    # Обязательно для spawn-worker'ов в оконной сборке PyInstaller: без этого
+    # дочерний процесс повторно запускает GUI вместо выполнения задания.
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     raise SystemExit(run())

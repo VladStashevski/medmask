@@ -13,9 +13,13 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog
 
+from typing import TYPE_CHECKING
+
 from . import __version__
-from .batch import BatchResult, MedMaskError, Progress, discover_files, process_folder
 from .ui import Animator, Button, ProgressBar, RoundedBox, SegmentRow, TextItem, truncate_middle
+
+if TYPE_CHECKING:  # движок импортируется только когда действительно нужен
+    from .batch import BatchResult, Progress
 
 
 # Палитра светлой темы Civium: нейтрали zinc, акцент blue-600.
@@ -95,6 +99,15 @@ PRIMARY_STYLE = {
     "disabled_text": FAINT,
 }
 
+CANCEL_STYLE = {
+    "fill": DANGER,
+    "hover": "#B91C1C",
+    "press": "#991B1B",
+    "text": "#FFFFFF",
+    "disabled_fill": "#F1DADA",
+    "disabled_text": "#A86A6A",
+}
+
 SECONDARY_STYLE = {
     "fill": CARD,
     "hover": "#F4F4F5",
@@ -123,8 +136,11 @@ class MedMaskApp:
         self.output_dir: Path | None = None
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.processing = False
+        self.cancel_event = threading.Event()
         self.started_at: float | None = None
-        self.last_progress: Progress | None = None
+        self.next_meta_refresh = 0.0
+        self.last_progress: "Progress | None" = None
+        self.discovered: tuple[list[Path], dict[str, int]] | None = None
         self.has_documents = False
         self.scan_token = 0
         self.content_width = 0
@@ -139,6 +155,7 @@ class MedMaskApp:
         root.title("MedMask")
         root.configure(bg=PAGE)
         root.resizable(True, False)
+        self._set_window_icon()
 
         self.canvas = tk.Canvas(root, bg=PAGE, highlightthickness=0, bd=0)
         self.canvas.pack(fill="both", expand=True)
@@ -150,7 +167,16 @@ class MedMaskApp:
 
         self._select_from_arguments()
         self._intro()
+        self._warm_engine()
         self.root.after(16, self._tick)
+
+    def _set_window_icon(self) -> None:
+        icon_path = Path(__file__).resolve().parent / "assets" / "app_icon.png"
+        try:
+            self.icon_image = tk.PhotoImage(file=str(icon_path))
+            self.root.iconphoto(True, self.icon_image)
+        except (OSError, tk.TclError):
+            self.icon_image = None
 
     @staticmethod
     def _scale_factor(root: tk.Tk) -> float:
@@ -302,29 +328,56 @@ class MedMaskApp:
 
         self.animator.run("rise", 0.5, rise)
 
+    def _warm_engine(self) -> None:
+        """Подгружает движок в фоне: окно появляется сразу, а к моменту выбора
+        папки тяжелые модули уже в памяти."""
+
+        def warm() -> None:
+            try:
+                from . import batch  # noqa: F401
+            except Exception:
+                pass
+
+        threading.Thread(target=warm, daemon=True).start()
+
     # ---------- цикл ----------
 
     def _tick(self) -> None:
+        latest_progress = None
+        terminal_event = None
         try:
             while True:
                 kind, payload = self.events.get_nowait()
                 if kind == "progress":
-                    self._show_progress(payload)  # type: ignore[arg-type]
+                    # Worker-процессы могут прислать сотни событий между двумя
+                    # кадрами. Для UI важен самый свежий снимок, а не отрисовка
+                    # каждого промежуточного значения.
+                    latest_progress = payload
                 elif kind == "scan":
                     self._show_scan(payload)  # type: ignore[arg-type]
-                elif kind == "done":
-                    self._show_done(payload)  # type: ignore[arg-type]
-                elif kind == "error":
-                    self._show_error(payload)  # type: ignore[arg-type]
+                elif kind in {"done", "error"}:
+                    terminal_event = (kind, payload)
         except queue.Empty:
             pass
 
+        if terminal_event is not None:
+            kind, payload = terminal_event
+            if kind == "done":
+                self._show_done(payload)  # type: ignore[arg-type]
+            else:
+                self._show_error(payload)  # type: ignore[arg-type]
+        elif latest_progress is not None:
+            self._show_progress(latest_progress)  # type: ignore[arg-type]
+
         delta = self.animator.tick()
         moving = self.progress.update(delta)
-        if self.processing:
+        now = time.monotonic()
+        if self.processing and now >= self.next_meta_refresh:
             self._refresh_meta()
-        busy = moving or self.processing or self.animator.busy
-        self.root.after(16 if busy else 60, self._tick)
+            self.next_meta_refresh = now + 0.25
+        busy = moving or self.animator.busy
+        delay = 16 if busy else 80 if self.processing else 60
+        self.root.after(delay, self._tick)
 
     # ---------- выбор папки ----------
 
@@ -347,6 +400,7 @@ class MedMaskApp:
         self.source_dir = path.resolve()
         self.output_dir = None
         self.last_progress = None
+        self.discovered = None
         self._refresh_path(animate=True)
         self.stage.set("Подсчет файлов", MUTED)
         self.meta.set("")
@@ -362,16 +416,22 @@ class MedMaskApp:
         threading.Thread(target=self._scan_worker, args=(self.source_dir, token), daemon=True).start()
 
     def _scan_worker(self, path: Path, token: int) -> None:
+        from .batch import discover_files
+
         try:
             files, skipped = discover_files(path)
         except OSError:
             files, skipped = [], {}
-        self.events.put(("scan", (token, len(files), sum(skipped.values()))))
+        self.events.put(("scan", (token, files, skipped)))
 
-    def _show_scan(self, payload: tuple[int, int, int]) -> None:
-        token, found, skipped = payload
+    def _show_scan(
+        self, payload: tuple[int, list[Path], dict[str, int]]
+    ) -> None:
+        token, files, skipped_by_extension = payload
         if token != self.scan_token or self.processing:
             return
+        found = len(files)
+        skipped = sum(skipped_by_extension.values())
         if not found:
             self.stage.set("Нет документов", WARNING)
             self._set_detail("Поддерживаются PDF, изображения, DOCX, RTF, ODT, TXT и XLSX.")
@@ -382,6 +442,7 @@ class MedMaskApp:
         if skipped:
             parts.append(f"{skipped} без поддержки")
         self._set_detail("  ·  ".join(parts))
+        self.discovered = (files, skipped_by_extension)
         self.has_documents = True
         self.run_button.set_enabled(True)
 
@@ -404,13 +465,21 @@ class MedMaskApp:
     # ---------- обработка ----------
 
     def _start(self) -> None:
-        if self.source_dir is None or self.processing:
+        if self.processing:
+            self._request_cancel()
+            return
+        if self.source_dir is None:
             return
         self.processing = True
+        self.cancel_event.clear()
         self.started_at = time.monotonic()
+        self.next_meta_refresh = self.started_at
         self.last_progress = None
         self.choose_button.set_enabled(False)
-        self.run_button.set_enabled(False)
+        self.run_button.set_text("Отменить")
+        self.run_button.set_style(CANCEL_STYLE)
+        self.run_button.set_enabled(True)
+        self._layout()
         self.open_button.set_visible(False)
         self.progress.set_color(PRIMARY)
         self.progress.start_scan()
@@ -419,37 +488,77 @@ class MedMaskApp:
         self.summary.set([])
         threading.Thread(target=self._run_worker, args=(self.source_dir,), daemon=True).start()
 
+    def _request_cancel(self) -> None:
+        if self.cancel_event.is_set():
+            return
+        self.cancel_event.set()
+        self.run_button.set_enabled(False)
+        self.stage.set("Отмена обработки", WARNING)
+        self._set_detail("Завершаем текущую страницу и останавливаем задания.", MUTED)
+
+    def _restore_run_button(self) -> None:
+        self.run_button.set_text("Обезличить")
+        self.run_button.set_style(PRIMARY_STYLE)
+        self._layout()
+
     def _run_worker(self, source_dir: Path) -> None:
+        from .batch import process_folder
+
         try:
             result = process_folder(
                 source_dir,
                 on_progress=lambda progress: self.events.put(("progress", progress)),
+                is_cancelled=self.cancel_event.is_set,
+                discovered=self.discovered,
             )
             self.events.put(("done", result))
         except Exception as error:  # noqa: BLE001 — окно показывает любую ошибку
             self.events.put(("error", error))
 
-    def _show_progress(self, progress: Progress) -> None:
+    def _show_progress(self, progress: "Progress") -> None:
         self.last_progress = progress
-        self.progress.set_value(progress.percent)
+        if progress.stage != "Анализ документов" or progress.percent > 0:
+            self.progress.set_value(progress.percent)
         self.stage.set(progress.stage, INK)
-        number = min(progress.completed + 1, progress.total)
-        self._set_detail(f"{number} из {progress.total}  ·  {progress.current_name}", MUTED, animate=False)
+        if progress.overall_fraction is None:
+            prefix = f"{min(progress.completed + 1, progress.total)} из {progress.total}"
+        else:
+            prefix = f"готово {progress.completed} из {progress.total}"
+        self._set_detail(
+            f"{prefix}  ·  {progress.current_name}", MUTED, animate=False
+        )
         self.summary.set([(progress.detail, FAINT)] if progress.detail else [])
 
     def _elapsed(self) -> str:
         seconds = 0 if self.started_at is None else int(time.monotonic() - self.started_at)
+        return self._format_duration(seconds)
+
+    @staticmethod
+    def _format_duration(seconds: int) -> str:
         minutes, seconds = divmod(seconds, 60)
         return f"{minutes:02d}:{seconds:02d}"
 
     def _refresh_meta(self) -> None:
         percent = self.last_progress.percent if self.last_progress else 0
-        self.meta.set(f"{percent:>3d}%   {self._elapsed()}", MUTED, animate=False)
+        elapsed_seconds = (
+            0 if self.started_at is None else int(time.monotonic() - self.started_at)
+        )
+        eta = ""
+        if 2 <= percent < 100 and elapsed_seconds >= 3:
+            remaining = round(elapsed_seconds * (100 - percent) / percent)
+            eta = f"   осталось ~{self._format_duration(remaining)}"
+        self.meta.set(
+            f"{percent:>3d}%   {self._format_duration(elapsed_seconds)}{eta}",
+            MUTED,
+            animate=False,
+        )
 
-    def _show_done(self, result: BatchResult) -> None:
+    def _show_done(self, result: "BatchResult") -> None:
         self.output_dir = result.output_dir
         elapsed = self._elapsed()
         self.processing = False
+        self.cancel_event.clear()
+        self._restore_run_button()
         self.progress.set_value(100)
         self.progress.set_color(DANGER if not result.successful else SUCCESS if not result.needs_review else WARNING)
         self.stage.set("Готово" if result.successful else "Ничего не создано", SUCCESS if result.successful else DANGER)
@@ -476,17 +585,29 @@ class MedMaskApp:
 
     def _show_error(self, error: Exception) -> None:
         self.processing = False
+        self._restore_run_button()
         self.progress.set_value(self.progress.value, immediate=True)
-        self.progress.set_color(DANGER)
         self.choose_button.set_enabled(True)
         self.run_button.set_enabled(self.has_documents)
-        self.stage.set("Ошибка", DANGER)
         self.meta.set(self._elapsed(), MUTED, animate=False)
-        if isinstance(error, MedMaskError):
+        from .batch import BatchCancelled, MedMaskError
+
+        if isinstance(error, BatchCancelled):
+            self.progress.set_color(WARNING)
+            self.stage.set("Отменено", WARNING)
+            message = "Обработка отменена. Исходные файлы не изменены."
+        elif isinstance(error, MedMaskError):
+            self.progress.set_color(DANGER)
+            self.stage.set("Ошибка", DANGER)
             message = str(error)
         else:
+            self.progress.set_color(DANGER)
+            self.stage.set("Ошибка", DANGER)
             message = "Не удалось завершить обработку. Исходные файлы не изменены."
-        self._set_detail(message, DANGER)
+        self._set_detail(
+            message,
+            WARNING if isinstance(error, BatchCancelled) else DANGER,
+        )
         self.summary.set([])
 
     def _open_result(self) -> None:

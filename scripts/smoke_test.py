@@ -22,11 +22,42 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURE = ROOT / "tests" / "fixtures" / "smoke"
+FONT = ROOT / "medmask" / "assets" / "LiberationSans-Regular.ttf"
 PERSONAL_DATA = (
     "Ковалёв", "Артём", "Сергеевич", "14.03.1968", "Ленина",
     "912", "123-456-789", "1234567890123456", "Петров",
+    "Смолина", "Елена", "12.04.1970",
 )
-CLINICAL_TEXT = ("ишемический инсульт", "Температура тела")
+CLINICAL_TEXT = (
+    "ишемический инсульт",
+    "Температура тела",
+    "контрольное распознавание текста",
+)
+
+
+def _create_ocr_fixture(source: Path, pymupdf) -> None:
+    """Растеризует стабильный кириллический текст — в PNG нет текстового слоя."""
+    with pymupdf.open() as document:
+        page = document.new_page(width=595, height=842)
+        page.insert_font(fontname="fixture", fontfile=str(FONT))
+        lines = (
+            "Пациент: Смолина Елена Петровна",
+            "Дата рождения: 12.04.1970",
+            "Диагноз: контрольное распознавание текста",
+        )
+        for index, line in enumerate(lines):
+            page.insert_text(
+                (54, 100 + index * 52),
+                line,
+                fontname="fixture",
+                fontsize=24,
+            )
+        pixmap = page.get_pixmap(
+            matrix=pymupdf.Matrix(2, 2),
+            colorspace=pymupdf.csRGB,
+            alpha=False,
+        )
+        pixmap.save(source / "OCR-проверка.png")
 
 
 def main(command: list[str]) -> int:
@@ -35,6 +66,10 @@ def main(command: list[str]) -> int:
     with tempfile.TemporaryDirectory() as workdir:
         source = Path(workdir) / "Карты"
         shutil.copytree(FIXTURE, source)
+        _create_ocr_fixture(source, pymupdf)
+        text_fixture = next(source.glob("*.txt"))
+        for index in (1, 2):
+            shutil.copy2(text_fixture, source / f"Повтор_{index}.txt")
 
         run = subprocess.run(
             [*command, "--batch", str(source)],
@@ -49,11 +84,15 @@ def main(command: list[str]) -> int:
 
         output_dir = Path(workdir) / "Обезличенные"
         pdfs = sorted(output_dir.glob("*.pdf"))
-        if not pdfs:
-            print(f"в {output_dir} нет ни одного PDF", file=sys.stderr)
+        if len(pdfs) != 4:
+            print(f"ожидалось 4 PDF, создано {len(pdfs)}", file=sys.stderr)
             return 1
         if not (output_dir / "_ОТЧЁТ.txt").is_file():
             print("отчёт не создан", file=sys.stderr)
+            return 1
+        report = (output_dir / "_ОТЧЁТ.txt").read_text(encoding="utf-8-sig")
+        if "OCR применён: документов 1, страниц 1" not in report:
+            print("собранное приложение не подтвердило OCR тестового скана", file=sys.stderr)
             return 1
 
         text = "\n".join(

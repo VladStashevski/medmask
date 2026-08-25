@@ -35,4 +35,4 @@ packages = ["medmask"]
 version = { attr = "medmask.__version__" }
 
 [tool.setuptools.package-data]
-medmask = ["assets/*.onnx", "assets/*.ttf"]
+medmask = ["assets/*.onnx", "assets/*.ttf", "assets/app_icon.png"]

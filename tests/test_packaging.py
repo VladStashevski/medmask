@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import re
 from pathlib import Path
 
@@ -105,10 +106,32 @@ def test_build_files_do_not_hardcode_the_version(path: str) -> None:
 
 def test_spec_is_the_single_build_definition() -> None:
     for script in ("scripts/build_macos.command", "scripts/build_windows.ps1"):
-        assert "MedMask.spec" in (ROOT / script).read_text(encoding="utf-8")
+        contents = (ROOT / script).read_text(encoding="utf-8")
+        assert "MedMask.spec" in contents
+        assert "test_all.py" in contents
     workflow = (ROOT / ".github/workflows/build-desktop.yml").read_text(encoding="utf-8")
     assert "MedMask.spec" in workflow
     assert "smoke_test.py" in workflow
+    assert "scripts/test_all.py" in workflow
+
+
+def test_release_checks_include_static_analysis_and_isolated_gui_suites() -> None:
+    script = (ROOT / "scripts" / "test_all.py").read_text(encoding="utf-8")
+    assert '"ruff", "check"' in script
+    assert '"tests/test_ui.py"' in script
+    assert '"tests/test_gui.py"' in script
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    constraints = (ROOT / "constraints.txt").read_text(encoding="utf-8")
+    assert "pytest>=9.0.3" in pyproject
+    assert "pytest==9.0.3" in constraints
+    assert "ruff==0.16.4" in constraints
+
+
+def test_unsafe_legacy_batch_entry_point_is_absent() -> None:
+    source = (ROOT / "medmask" / "depersonalizer.py").read_text(encoding="utf-8")
+    assert "def write_audit_report" not in source
+    assert 'if __name__ == "__main__"' not in source
 
 
 def test_builds_use_the_tested_dependency_constraints() -> None:
@@ -152,3 +175,21 @@ def test_batch_mode_survives_without_stdout(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("sys.argv", ["MedMask", "--batch", str(source)])
     assert entry_point.run() == 0
     assert list((tmp_path / "Обезличенные").glob("*.pdf"))
+
+
+def test_batch_mode_does_not_print_sensitive_unknown_errors(monkeypatch) -> None:
+    import main as entry_point
+
+    secret = "/Users/doctor/Иванов Иван Иванович.pdf"
+
+    def fail(_source):
+        raise RuntimeError(secret)
+
+    stderr = io.StringIO()
+    monkeypatch.setattr("medmask.batch.process_folder", fail)
+    monkeypatch.setattr("sys.stderr", stderr)
+    monkeypatch.setattr("sys.argv", ["MedMask", "--batch", "/tmp/Карты"])
+
+    assert entry_point.run() == 1
+    assert secret not in stderr.getvalue()
+    assert stderr.getvalue().strip() == "Не удалось завершить обработку."

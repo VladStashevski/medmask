@@ -34,7 +34,8 @@ class ScanWorker(QThread):
         try:
             files, skipped = discover_files(self._source_dir)
         except OSError:
-            files, skipped = [], {}
+            # None отличает ошибку чтения от корректно прочитанной пустой папки.
+            files, skipped = None, {}
         self.ready.emit(self._token, files, skipped)
 
 

@@ -9,6 +9,7 @@ BUILD_ENV=".venv-build"
 "$PYTHON_BIN" -m venv "$BUILD_ENV"
 "$BUILD_ENV/bin/python" -m pip install --upgrade pip
 "$BUILD_ENV/bin/python" -m pip install -c constraints.txt ".[build]"
+"$BUILD_ENV/bin/python" scripts/test_all.py
 "$BUILD_ENV/bin/pyinstaller" --noconfirm --clean MedMask.spec
 
 codesign --force --deep --sign - dist/MedMask.app

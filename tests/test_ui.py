@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import queue
+import time
 import tkinter as tk
 
 import pytest
@@ -282,6 +283,35 @@ def test_progress_stays_hidden_until_work_starts(root) -> None:
 
     app._set_footer(True)
     assert app.progress.visible is True
+
+
+def test_finished_summary_contains_only_count_and_time(root, tmp_path) -> None:
+    from medmask.batch import BatchResult, FileResult
+
+    app = MedMaskApp(root)
+    app.files.set_files(["карта.txt"])
+    app.has_documents = True
+    app.started_at = time.monotonic()
+
+    output = tmp_path / "Обезличенные"
+    output.mkdir()
+    item = FileResult(
+        number=1,
+        source_path=tmp_path / "карта.txt",
+        output_path=output / "document_0001.pdf",
+        low_confidence_pages=[1],
+    )
+    result = BatchResult(
+        source_dir=tmp_path,
+        output_dir=output,
+        files=[item],
+        skipped_by_extension={},
+        report_path=output / "_ОТЧЁТ.txt",
+    )
+
+    app._show_done(result)
+
+    assert app.stage_text == "1 файл за 00:00"
 
 
 def test_big_folder_does_not_create_a_row_per_file(root) -> None:

@@ -215,6 +215,20 @@ def test_reading_a_folder_then_finding_nothing(controller: Controller, tmp_path:
     assert not controller.canStart
 
 
+def test_folder_read_error_is_not_reported_as_an_empty_folder(
+    controller: Controller, tmp_path: Path
+) -> None:
+    controller.set_folder(tmp_path)
+
+    controller._on_scan_ready(controller._scan_token, None, {})
+
+    assert controller.state == FAILED
+    assert controller.emptyKind == "error"
+    assert controller.stageTone == "danger"
+    assert controller.stageText == "Не удалось прочитать выбранную папку"
+    assert not controller.canStart
+
+
 def test_ready_lists_the_documents(controller: Controller, tmp_path: Path) -> None:
     controller.set_folder(tmp_path)
     _scan(controller, [tmp_path / "Выписка.pdf", tmp_path / "Анализы.xlsx"], {".dcm": 1})
@@ -275,6 +289,7 @@ def test_success_offers_the_result(controller: Controller, tmp_path: Path) -> No
     assert controller.hasResult
     assert controller.progress == 1.0
     assert controller.documents.status_of(1) == "done"
+    assert controller.stageText == "3 файла за 00:00"
 
 
 def test_review_is_a_separate_outcome(controller: Controller, tmp_path: Path) -> None:
@@ -285,7 +300,7 @@ def test_review_is_a_separate_outcome(controller: Controller, tmp_path: Path) ->
     assert controller.state == REVIEW
     # Обработка прошла — итог зеленый, а разбираться надо по строкам.
     assert controller.stageTone == "success"
-    assert "проверить 1" in controller.stageText
+    assert controller.stageText == "3 файла за 00:00"
     assert controller.documents.status_of(2) == "review"
 
 

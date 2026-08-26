@@ -328,6 +328,13 @@ class Controller(QObject):
     def _on_scan_ready(self, token: int, files, skipped_by_extension) -> None:
         if token != self._scan_token or self._get_busy():
             return
+        if files is None:
+            self._discovered = None
+            self._skipped = 0
+            self._documents.clear()
+            self._set_stage("Не удалось прочитать выбранную папку", "danger")
+            self._apply_state(FAILED)
+            return
         self._skipped = sum(skipped_by_extension.values())
         if not files:
             self._discovered = None
@@ -425,22 +432,8 @@ class Controller(QObject):
 
     def _summary(self, result) -> str:
         successful = result.successful
-        parts = [f"{successful} {plural(successful, 'файл', 'файла', 'файлов')}"]
-        # В строку идет только то, после чего человек что-то делает: файлы,
-        # которые надо просмотреть, и файлы, которые не вышли. Сколько сканов
-        # прошло через OCR и сколько файлов чужого формата пропущено — это
-        # внутренняя статистика, она лежит в отчете рядом с результатом.
-        if result.needs_review:
-            parts.append(f"проверить {len(result.needs_review)}")
-        if result.failed:
-            parts.append(f"с ошибкой {result.failed}")
-        # Длительность стоит здесь, а не отдельной подписью: рядом с кнопкой
-        # на нее не остается места. Имя созданной папки из итога тоже убрано —
-        # до нее ведет кнопка «Открыть результат».
-        if self._elapsed >= 1:
-            parts.append(f"за {format_duration(self._elapsed)}")
-        head = "Готово" if successful else "Ничего не создано"
-        return f"{head}  ·  " + "  ·  ".join(parts)
+        files = plural(successful, "файл", "файла", "файлов")
+        return f"{successful} {files} за {format_duration(self._elapsed)}"
 
     def _reset_progress(self) -> None:
         self._progress = 0.0

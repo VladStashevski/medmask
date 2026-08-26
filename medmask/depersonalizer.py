@@ -15,15 +15,13 @@
 
 Не-PDF форматы (docx/rtf/odt/odg/xlsx/txt) читаются и тоже сохраняются как обезличенный PDF.
 """
+import glob
 import os
 import re
-import sys
-import glob
 import zipfile
 import xml.etree.ElementTree as ET
 from contextvars import ContextVar
 from datetime import datetime, date
-import hashlib
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -31,7 +29,6 @@ from pathlib import Path
 import chardet
 import docx2txt
 from striprtf.striprtf import rtf_to_text
-from tqdm import tqdm
 
 from . import ocr as local_ocr
 
@@ -54,8 +51,6 @@ def _load_openpyxl():
     return openpyxl
 
 
-INPUT_DIR = "Карты"
-OUTPUT_DIR = "Карты_clean"
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
 
 
@@ -153,7 +148,12 @@ def read_xlsx(path: str) -> str:
     openpyxl = _load_openpyxl()
     if openpyxl is None:
         raise RuntimeError("Для xlsx нужен openpyxl. Установите: pip install openpyxl")
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    wb = openpyxl.load_workbook(
+        path,
+        read_only=True,
+        data_only=True,
+        keep_links=False,
+    )
     try:
         lines = []
         multi = len(wb.worksheets) > 1
@@ -2181,10 +2181,9 @@ def _mask_orphan_policy_issue_date(text: str) -> str:
          последний увиденный кандидат-даты, если он был, тоже затирается.
     """
     lines = text.split("\n")
-    n = len(lines)
     ctx_active = False
     result = []
-    for idx, line in enumerate(lines):
+    for line in lines:
         stripped = line.strip()
 
         # Обновляем контекст: метка «дата выдачи полис…» + маркер [DATE] или голая дата.
@@ -3141,194 +3140,10 @@ def audit_pdf(out_path: str, on_progress=None):
     return findings
 
 
-def write_audit_report(reports):
-    path = os.path.join(OUTPUT_DIR, "_ОТЧЁТ_audit.txt")
-    lines = [
-        "ОТЧЁТ ПО ОБЕЗЛИЧИВАНИЮ",
-        f"Дата: {datetime.now():%Y-%m-%d %H:%M}",
-        f"Обработано файлов: {len(reports)}",
-        "",
-    ]
-    warned = 0
-    for r in reports:
-        problems = []
-        if r.get("error"):
-            problems.append(f"ОШИБКА ОБРАБОТКИ: {r['error']}")
-        if r.get("scan_pages"):
-            problems.append(
-                "СКАН без извлекаемого текста на стр. "
-                f"{r['scan_pages']} — проверить исходник вручную"
-            )
-        for kind, snippet in r.get("findings", []):
-            problems.append(f"ВОЗМОЖНА ПДн [{kind}]: {snippet}")
-        if r.get("image_pages"):
-            problems.append(
-                f"картинки отброшены (текст сохранён) на стр. {r['image_pages']}"
-            )
-        if problems:
-            warned += 1
-            lines.append(f"### {r['name']}  ->  {r.get('out', '-')}")
-            lines.extend(f"   - {p}" for p in problems)
-            lines.append("")
-
-    if warned == 0:
-        lines.append("OK: подозрительных ПДн-паттернов в выходных PDF не найдено,")
-        lines.append("    сканов и нечитаемых страниц нет.")
-    else:
-        lines.insert(4, f"ВНИМАНИЕ: файлов с предупреждениями — {warned}. См. ниже.\n")
-
-    with open(path, "w", encoding="utf-8-sig") as f:
-        f.write("\n".join(lines))
-    return path, warned
-
-
-# ==================== БЕЗОПАСНЫЕ ИМЕНА ФАЙЛОВ ====================
-
-INVALID_WIN_CHARS = r'<>:"/\\|?*\x00-\x1F'
-invalid_re = re.compile(f"[{INVALID_WIN_CHARS}]")
-
-
-def safe_filename(base: str, limit: int = 180) -> str:
-    base = unicodedata.normalize("NFC", base)
-    base = invalid_re.sub("_", base)
-    base = re.sub(r"\s+", " ", base).strip().rstrip(" .")
-    if not base:
-        base = "file"
-    if len(base) > limit:
-        h = hashlib.sha1(base.encode("utf-8")).hexdigest()[:6]
-        base = base[: max(1, limit - 7)] + "_" + h
-    return base
-
-
-def extract_history_number(base: str) -> str | None:
-    nums = re.findall(r"\d{6,20}", base)
-    return nums[-1] if nums else None
-
-
-# ==================== ОБРАБОТКА ФАЙЛОВ ====================
+# ==================== ПОДДЕРЖИВАЕМЫЕ ФОРМАТЫ ====================
 
 SUPPORTED_EXT = set(READERS) | {".pdf"} | IMAGE_EXT
 
 
 def should_skip_filename(name: str) -> bool:
     return name.startswith(("~$", ".~lock.", "."))
-
-
-def get_unique_path(path: str) -> str:
-    if not os.path.exists(path):
-        return path
-    base, ext = os.path.splitext(path)
-    n = 1
-    while os.path.exists(f"{base}_{n}{ext}"):
-        n += 1
-    return f"{base}_{n}{ext}"
-
-
-def process(path: str):
-    name = os.path.basename(path)
-    if should_skip_filename(name):
-        return None
-    base, ext = os.path.splitext(name)
-    ext = ext.lower()
-    if ext not in SUPPORTED_EXT:
-        print(f"Пропускаю {name}: неподдерживаемый формат ({ext})")
-        return None
-
-    report = {"name": name, "out": "-", "scan_pages": [], "image_pages": [], "findings": []}
-    try:
-        if ext == ".pdf":
-            (
-                page_texts,
-                page_rects,
-                scan_pages,
-                image_pages,
-                ocr_pages,
-                low_confidence_pages,
-            ) = build_pages_from_pdf(path)
-            report["scan_pages"] = scan_pages
-            report["image_pages"] = image_pages
-            report["ocr_pages"] = ocr_pages
-            report["low_confidence_pages"] = low_confidence_pages
-        elif ext in IMAGE_EXT:
-            (
-                page_texts,
-                page_rects,
-                scan_pages,
-                ocr_pages,
-                low_confidence_pages,
-            ) = build_pages_from_image(path)
-            report["scan_pages"] = scan_pages
-            report["ocr_pages"] = ocr_pages
-            report["low_confidence_pages"] = low_confidence_pages
-        else:
-            raw = READERS[ext](path)
-            page_texts, page_rects = build_pages_from_text(raw, source_name=name)
-    except Exception as e:
-        print(f"Ошибка при чтении {name}: {e}")
-        report["error"] = str(e)
-        return report
-
-    history_no = extract_history_number(base)
-    out_base = safe_filename(history_no if history_no else base)
-    out_path = get_unique_path(os.path.join(OUTPUT_DIR, out_base + ".pdf"))
-    try:
-        save_clean_pdf(page_texts, page_rects, out_path)
-    except Exception as e:
-        print(f"Ошибка при сборке PDF для {name}: {e}")
-        report["error"] = str(e)
-        return report
-
-    report["out"] = os.path.basename(out_path)
-    report["findings"] = audit_pdf(out_path)
-    return report
-
-
-def main():
-    if fitz is None:
-        print("PyMuPDF (fitz) не установлен. Установите: pip install PyMuPDF")
-        return
-    if _find_cyrillic_font() is None:
-        print("Не найден шрифт с кириллицей (arial.ttf / DejaVuSans / Helvetica и др.) — PDF не собрать.")
-        if sys.platform == "darwin":
-            print("  macOS: обычно шрифты лежат в /System/Library/Fonts/Supplemental/")
-            print("  Если их нет — установите Arial или запустите:")
-            print("    brew install --cask font-dejavu-sans")
-        elif sys.platform.startswith("linux"):
-            print("  Linux: установите пакет со шрифтами, напр.:")
-            print("    Debian/Ubuntu: sudo apt install fonts-dejavu")
-            print("    Fedora/RHEL:   sudo dnf install dejavu-sans-fonts")
-            print("    Arch:          sudo pacman -S ttf-dejavu")
-        else:
-            print("  Windows: ожидается наличие arial.ttf в C:\\Windows\\Fonts")
-        return
-
-    files = [os.path.join(INPUT_DIR, f) for f in os.listdir(INPUT_DIR)
-             if os.path.isfile(os.path.join(INPUT_DIR, f))]
-    print(f"Найдено файлов: {len(files)}")
-
-    reports = []
-    for f in tqdm(files, desc="Деперсонализация"):
-        r = process(f)
-        if r is not None:
-            reports.append(r)
-
-    report_path, warned = write_audit_report(reports)
-    print(f"Готово! Обезличенные PDF лежат в папке {OUTPUT_DIR}")
-    if warned:
-        print(f"ВНИМАНИЕ: {warned} файл(ов) с предупреждениями — см. {report_path}")
-    else:
-        print(f"Отчёт аудита: {report_path} (предупреждений нет)")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        import traceback
-        print("\n!!! Произошла ошибка:")
-        traceback.print_exc()
-    finally:
-        try:
-            input("\nГотово. Нажмите Enter, чтобы закрыть окно...")
-        except EOFError:
-            pass

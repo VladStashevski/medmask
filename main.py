@@ -29,8 +29,8 @@ def run() -> int:
         except MedMaskError as error:
             _report(error, sys.stderr)
             return 1
-        except Exception as error:  # noqa: BLE001 — код возврата важнее трейсбека
-            _report(f"Не удалось завершить обработку: {error}", sys.stderr)
+        except Exception:  # noqa: BLE001 — наружу не должны попасть пути и имена
+            _report("Не удалось завершить обработку.", sys.stderr)
             return 1
         _report(result.output_dir)
         return 0

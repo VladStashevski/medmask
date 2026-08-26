@@ -20,8 +20,7 @@
 Пользователю не нужно устанавливать Python или библиотеки: они включаются
 в автономную сборку.
 
-Готовые файлы для Windows и macOS находятся в разделе Releases приватного
-репозитория. Для скачивания нужно войти в GitHub под аккаунтом с доступом.
+Готовые файлы для Windows и macOS находятся в разделе Releases репозитория.
 Оба артефакта — zip-архивы: в Windows распакуйте папку и запустите
 MedMask.exe, в macOS перенесите MedMask.app в «Программы».
 
@@ -180,7 +179,7 @@ QT_SCALE_FACTOR=1.5 python scripts/preview_ui.py --out preview-150
 ~~~bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -c constraints.txt ".[build]"
-.venv/bin/python -m pytest
+.venv/bin/python scripts/test_all.py
 .venv/bin/python main.py
 ~~~
 

@@ -42,7 +42,7 @@ jobs:
         run: python -m pip install -c constraints.txt ".[build]"
 
       - name: Test
-        run: python -m pytest
+        run: python scripts/test_all.py
 
       - name: Build
         run: pyinstaller --noconfirm --clean MedMask.spec

@@ -350,7 +350,10 @@ class MedMaskApp:
     def _layout(self) -> int:
         px = self.px
         fonts = self.fonts
-        line = lambda name: fonts[name].metrics("linespace")
+
+        def line(name: str) -> int:
+            return fonts[name].metrics("linespace")
+
         pad = px(PAD)
         inner = px(theme.SPACE_4)
         width = max(self.canvas.winfo_width(), px(theme.MIN_WIDTH))
@@ -960,22 +963,9 @@ class MedMaskApp:
             )
         self.files.finish()
 
-        parts = [f"{result.successful} {plural(result.successful, 'файл', 'файла', 'файлов')}"]
-        if result.recognized_with_ocr:
-            parts.append(f"OCR {result.recognized_with_ocr}")
-        if result.needs_review:
-            parts.append(f"проверить {len(result.needs_review)}")
-        if result.failed:
-            parts.append(f"с ошибкой {result.failed}")
-        skipped = sum(result.skipped_by_extension.values())
-        if skipped:
-            parts.append(f"пропущено {skipped}")
-        head = "Готово" if result.successful else "Ничего не создано"
-        # имя созданной папки прямо в итоге: пользователю не нужно гадать,
-        # куда лег результат, даже если он не нажмет «Открыть результат»
-        parts.append(result.output_dir.name)
+        files = plural(result.successful, "файл", "файла", "файлов")
         self._set_stage(
-            f"{head}  ·  " + "  ·  ".join(parts),
+            f"{result.successful} {files} за {elapsed}",
             SUCCESS if result.successful else DANGER,
         )
         self._layout()

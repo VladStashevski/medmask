@@ -5,6 +5,7 @@ $BuildEnv = ".venv-build"
 py -3 -m venv $BuildEnv
 & "$BuildEnv\Scripts\python.exe" -m pip install --upgrade pip
 & "$BuildEnv\Scripts\python.exe" -m pip install -c constraints.txt ".[build]"
+& "$BuildEnv\Scripts\python.exe" scripts\test_all.py
 
 # Сборка папкой, а не одним файлом: onefile распаковывает больше сотни мегабайт
 # во временный каталог при каждом запуске, и программа стартует по 10-20 секунд.

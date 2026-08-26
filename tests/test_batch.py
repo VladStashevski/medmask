@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 import threading
 from pathlib import Path
 
@@ -36,6 +38,42 @@ def test_discovery_is_recursive_and_does_not_include_hidden_files(tmp_path: Path
     assert skipped == {}
 
 
+def test_discovery_does_not_follow_file_symlinks_outside_the_folder(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Карты"
+    source.mkdir()
+    outside = tmp_path / "Иванов.txt"
+    outside.write_text("Пациент: Иванов Иван Иванович", encoding="utf-8")
+    link = source / "ссылка.txt"
+    try:
+        link.symlink_to(outside)
+    except (NotImplementedError, OSError):
+        pytest.skip("симлинки недоступны в этой среде")
+
+    files, _skipped = batch.discover_files(source)
+
+    assert files == []
+
+
+def test_discovered_manifest_cannot_escape_the_selected_folder(tmp_path: Path) -> None:
+    source = tmp_path / "Карты"
+    source.mkdir()
+    inside = source / "карта.txt"
+    inside.write_text("текст", encoding="utf-8")
+    outside = tmp_path / "Иванов.txt"
+    outside.write_text("секрет", encoding="utf-8")
+    unsupported = source / "архив.bin"
+    unsupported.write_bytes(b"data")
+
+    files = batch._validated_manifest_files(
+        source.resolve(),
+        [inside, outside, inside, unsupported],
+    )
+
+    assert files == [inside.resolve()]
+
+
 def test_safe_report_contains_no_source_name_or_text_snippet(tmp_path: Path) -> None:
     secret_name = "Иванов Иван Иванович.pdf"
     secret_snippet = "Иванов Иван Иванович, телефон 89991234567"
@@ -47,13 +85,43 @@ def test_safe_report_contains_no_source_name_or_text_snippet(tmp_path: Path) -> 
         findings=[("ФИО", secret_snippet)],
     )
 
-    report_path = batch.write_safe_report(tmp_path, [result], {".jpg": 2})
+    report_path = batch.write_safe_report(
+        tmp_path,
+        [result],
+        {".jpg": 2, ".Иванов": 1},
+    )
     report = report_path.read_text(encoding="utf-8-sig")
 
     assert secret_name not in report
     assert secret_snippet not in report
     assert "document_0001" in report
     assert ".jpg: 2" in report
+    assert "Иванов" not in report
+    assert "другие расширения: 1" in report
+
+
+def test_xlsx_reader_does_not_load_external_workbook_links(monkeypatch) -> None:
+    captured = {}
+
+    class Workbook:
+        worksheets = []
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    class OpenPyxl:
+        @staticmethod
+        def load_workbook(path, **kwargs):
+            captured.update(kwargs)
+            return Workbook()
+
+    monkeypatch.setattr(batch.engine, "_load_openpyxl", lambda: OpenPyxl())
+
+    assert batch.engine.read_xlsx("карта.xlsx") == ""
+    assert captured["read_only"] is True
+    assert captured["data_only"] is True
+    assert captured["keep_links"] is False
 
 
 def test_inn_is_masked() -> None:
@@ -354,6 +422,11 @@ def test_process_folder_creates_anonymized_pdf_and_keeps_source(tmp_path: Path) 
     assert result.output_dir == tmp_path / "Обезличенные"
     assert result.successful == 1
     assert [path.name for path in result.output_dir.glob("*.pdf")] == ["document_0001.pdf"]
+
+    if os.name != "nt":
+        assert stat.S_IMODE(result.output_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(result.report_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(result.files[0].output_path.stat().st_mode) == 0o600
 
     with batch.engine.fitz.open(result.output_dir / "document_0001.pdf") as document:
         output_text = "\n".join(page.get_text() for page in document).replace("\u00a0", " ")

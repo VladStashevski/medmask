@@ -6,6 +6,7 @@ import concurrent.futures
 import multiprocessing
 import os
 import queue
+import re
 import shutil
 from collections import Counter
 from dataclasses import dataclass, field
@@ -18,6 +19,9 @@ from . import depersonalizer as engine
 
 
 REPORT_FILE_NAME = "_ОТЧЁТ.txt"
+_SAFE_EXTENSION_RE = re.compile(r"\.[a-z0-9][a-z0-9+_-]{0,9}\Z", re.ASCII)
+_NO_EXTENSION = "без расширения"
+_OTHER_EXTENSIONS = "другие расширения"
 
 
 class MedMaskError(RuntimeError):
@@ -149,7 +153,9 @@ def discover_files(source_dir: Path) -> tuple[list[Path], dict[str, int]]:
     supported: list[Path] = []
     skipped: Counter[str] = Counter()
     for path in source_dir.rglob("*"):
-        if not path.is_file():
+        # Ссылка внутри выбранной папки может вести к документу за её
+        # пределами. Такой файл пользователь не выбирал, поэтому не читаем его.
+        if path.is_symlink() or not path.is_file():
             continue
         relative = path.relative_to(source_dir)
         if _hidden_or_temporary(relative):
@@ -161,6 +167,49 @@ def discover_files(source_dir: Path) -> tuple[list[Path], dict[str, int]]:
             skipped[extension or "без расширения"] += 1
     supported.sort(key=lambda item: str(item.relative_to(source_dir)).casefold())
     return supported, dict(sorted(skipped.items()))
+
+
+def _validated_manifest_files(source: Path, manifest: list[Path]) -> list[Path]:
+    """Проверяет снимок GUI перед обработкой.
+
+    Между обходом папки и нажатием кнопки файл могли заменить симлинком,
+    удалить или переименовать. Не доверяем старому списку и не позволяем ему
+    вывести чтение за пределы выбранной папки.
+    """
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for raw_path in manifest:
+        candidate = Path(raw_path)
+        if not candidate.is_absolute():
+            candidate = source / candidate
+        try:
+            if candidate.is_symlink():
+                continue
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(source)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if (
+            resolved in seen
+            or not resolved.is_file()
+            or _hidden_or_temporary(relative)
+            or resolved.suffix.lower() not in engine.SUPPORTED_EXT
+        ):
+            continue
+        seen.add(resolved)
+        files.append(resolved)
+    return files
+
+
+def _restrict_permissions(path: Path, mode: int) -> None:
+    """На POSIX оставляет медицинские результаты доступными только владельцу."""
+    if os.name == "nt":
+        return
+    try:
+        path.chmod(mode)
+    except OSError:
+        # Сетевые и некоторые внешние файловые системы не поддерживают chmod.
+        pass
 
 
 def _requires_ocr(path: Path) -> bool:
@@ -336,6 +385,7 @@ def _process_file(
             str(output_path),
             on_progress=engine_progress,
         )
+        _restrict_permissions(output_path, 0o600)
         result.output_path = output_path
         notify("Проверка результата", 0.88)
         result.findings = engine.audit_pdf(str(output_path), on_progress=engine_progress)
@@ -398,6 +448,7 @@ def _process_files_parallel(
     ocr_workers, text_workers = _worker_limits(len(ocr_jobs), len(text_jobs))
 
     fractions = {number: 0.0 for number, _path in numbered}
+    total_fraction = 0.0
     results: dict[int, FileResult] = {}
     future_info: dict[concurrent.futures.Future, tuple[int, Path]] = {}
     executors: list[concurrent.futures.ProcessPoolExecutor] = []
@@ -411,10 +462,14 @@ def _process_files_parallel(
         outcome: str = "",
         badge: str = "",
     ) -> None:
-        fractions[number] = max(fractions[number], min(1.0, max(0.0, fraction)))
+        nonlocal total_fraction
+        previous = fractions[number]
+        current = max(previous, min(1.0, max(0.0, fraction)))
+        fractions[number] = current
+        total_fraction += current - previous
         if on_progress is None:
             return
-        overall = sum(fractions.values()) / total if total else 0.0
+        overall = total_fraction / total if total else 0.0
         on_progress(
             Progress(
                 completed=len(results),
@@ -572,8 +627,20 @@ def write_safe_report(
         lines.extend(["Автоматическая проверка не нашла предупреждений.", ""])
 
     if skipped_by_extension:
+        # Обычные технические расширения полезны в отчёте, но произвольный
+        # Unicode-хвост может быть частью исходного имени и содержать ПДн.
+        safe_skipped: Counter[str] = Counter()
+        for extension, count in skipped_by_extension.items():
+            normalized = extension.lower()
+            label = (
+                normalized
+                if normalized == _NO_EXTENSION
+                or _SAFE_EXTENSION_RE.fullmatch(normalized)
+                else _OTHER_EXTENSIONS
+            )
+            safe_skipped[label] += count
         skipped = ", ".join(
-            f"{extension}: {count}" for extension, count in skipped_by_extension.items()
+            f"{extension}: {count}" for extension, count in sorted(safe_skipped.items())
         )
         lines.extend(
             [
@@ -591,6 +658,7 @@ def write_safe_report(
 
     report_path = output_dir / REPORT_FILE_NAME
     report_path.write_text("\n".join(lines), encoding="utf-8-sig")
+    _restrict_permissions(report_path, 0o600)
     return report_path
 
 
@@ -612,7 +680,7 @@ def process_folder(
         files, skipped = discover_files(source)
     else:
         manifest_files, manifest_skipped = discovered
-        files = [path for path in manifest_files if path.is_file()]
+        files = _validated_manifest_files(source, manifest_files)
         skipped = dict(manifest_skipped)
     if not files:
         formats = ", ".join(sorted(engine.SUPPORTED_EXT))
@@ -643,7 +711,8 @@ def process_folder(
         raise BatchCancelled("Обработка отменена.")
 
     output_dir = _new_output_dir(source)
-    output_dir.mkdir(parents=False, exist_ok=False)
+    output_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
+    _restrict_permissions(output_dir, 0o700)
 
     try:
         if use_parallel:

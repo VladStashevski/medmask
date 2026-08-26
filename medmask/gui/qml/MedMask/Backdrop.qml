@@ -17,6 +17,18 @@ Item {
         anchors.fill: parent
         visible: Theme.systemBackdrop
         color: Theme.appFill
+
+        // Поверх системного размытия — свет сверху и холодный отлив ко дну.
+        // Одна ровная пелена читается как пленка на обоях; отлив дает окну
+        // глубину, оставаясь на грани заметности.
+        Rectangle {
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.12) }
+                GradientStop { position: 0.5; color: Qt.rgba(1, 1, 1, 0) }
+                GradientStop { position: 1.0; color: Qt.rgba(0.62, 0.76, 0.98, 0.14) }
+            }
+        }
     }
 
     Rectangle {

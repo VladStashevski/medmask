@@ -27,6 +27,9 @@ NS_MATERIALS = {
     "content": 18,
     "under": 21,
 }
+# Материал по умолчанию: боковая панель Finder. Размытие заметное, но обои
+# сквозь него еще угадываются — «content» и «under» превращают их в пятно.
+DEFAULT_GLASS_MATERIAL = "sidebar"
 NS_BLENDING_BEHIND_WINDOW = 0
 NS_EFFECT_STATE_ACTIVE = 1
 NS_VIEW_WIDTH_SIZABLE = 2
@@ -110,11 +113,12 @@ def style_window(window, glass: bool = True) -> bool:
         return False
     if glass:
         make_translucent(window)
-        # Системное матовое стекло размывает фон так сильно, что обои
-        # превращаются в ровное пятно. По умолчанию его нет: окно просто
-        # полупрозрачное, и рабочий стол виден как есть. Кому нужен матовый
-        # вариант — включается переменной с именем материала.
+        # Размыть рабочий стол умеет только система, поэтому фон окна —
+        # NSVisualEffectView. Материал можно сменить переменной, а имя не из
+        # списка (скажем, «none») оставляет окно просто полупрозрачным.
         material = os.environ.get("MEDMASK_GLASS_MATERIAL", "").strip().lower()
+        if not material:
+            material = DEFAULT_GLASS_MATERIAL
         if material in NS_MATERIALS:
             install_glass_backdrop(window, NS_MATERIALS[material])
     return True

@@ -103,18 +103,23 @@ QtObject {
     // и им хватает легкого осветления. Без системного стекла заливка плотнее,
     // иначе строки просвечивают сквозь пилюлю.
     readonly property color panelFill: systemBackdrop
-        ? Qt.rgba(1, 1, 1, 0.22)
-        : (glass ? Qt.rgba(1, 1, 1, 0.7) : "#FBFCFE")
-    // Внутренний блик приглушен: яркая белая нить по кромке перечеркивала
-    // строку, которая проходит под пилюлей, и читалась как рез по прямой.
-    readonly property color panelEdge: Qt.rgba(1, 1, 1, 0)
+        ? Qt.rgba(1, 1, 1, 0.34)
+        : (glass ? Qt.rgba(1, 1, 1, 0.78) : "#FBFCFE")
+    // Стеклянный кант по кромке. Ровным по кругу он быть не может: строка
+    // списка проходит под пилюлей, и сплошная белая нить читалась бы как рез
+    // по прямой — поэтому GlassPanel гасит кант к нижнему краю маской.
+    readonly property color panelEdge: Qt.rgba(1, 1, 1, 0.68)
+    // Блик внутри капсулы: стекло ловит свет сверху и гаснет к середине.
+    readonly property color panelSheen: Qt.rgba(1, 1, 1, 0.34)
     // Строки лежат прямо на стекле, поэтому подсветка чуть заметнее.
     readonly property color rowGlassHover: Qt.rgba(1, 1, 1, 0.45)
     // Исходный цвет подсветки — прозрачный белый, а не «transparent»:
     // «transparent» это прозрачный черный, и переход к белому проходит
     // через серую вспышку.
     readonly property color rowIdle: Qt.rgba(1, 1, 1, 0)
-    readonly property color panelBorder: Qt.rgba(0.06, 0.09, 0.16, 0)
+    // Внешний контур канта: холодная тень толщиной в волос, она отделяет
+    // стекло от фона там, где под пилюлей нет ни строки, ни рабочего стола.
+    readonly property color panelBorder: Qt.rgba(0.16, 0.24, 0.42, 0.18)
 
     // Список читают глазами, поэтому он заметно плотнее панелей.
     readonly property color cardFill: systemBackdrop ? "transparent" : "#FFFFFF"

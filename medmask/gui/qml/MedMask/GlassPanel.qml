@@ -23,6 +23,7 @@ Item {
     property color fillColor: Theme.panelFill
     property color edgeColor: Theme.panelEdge
     property color borderColor: Theme.panelBorder
+    property color sheenColor: Theme.panelSheen
     property bool elevated: true
     property real blurAmount: 1.0
     // Насколько мягко пилюля вступает на строку. Разом она этого делать не
@@ -99,12 +100,17 @@ Item {
             autoPaddingEnabled: false
             blurEnabled: true
             blur: panel.blurAmount
-            // Радиус небольшой: под пилюлю уходит строка списка, и сильное
-            // размытие выбеливало ее до фона — на кромке текст обрывался.
-            // Замер по темной точке текста: при 40 она белеет до 184, при 8
-            // остается около 100, то есть строка под стеклом еще читается.
-            blurMax: 6
-            blurMultiplier: 0.15
+            // Стекло матовое: под пилюлей от строки остается цветное пятно,
+            // а не читаемый текст. Больше 32 брать нельзя — размытие тянет
+            // пиксели из-за края слепка, и на кромке капсулы проступает
+            // растянутая полоса.
+            blurMax: 32
+            blurMultiplier: 0.7
+            // Настоящее матовое стекло не только размывает, но и слегка
+            // поднимает цвет подложки: без этого слепок под белой заливкой
+            // выцветает в серую муть.
+            saturation: 0.25
+            brightness: 0.06
             maskEnabled: true
             maskSource: maskTexture
             // Порог именно 0.5: при нуле MultiEffect не отсекает ничего, и
@@ -118,28 +124,102 @@ Item {
             antialiasing: true
             // Заливка ровная до самого края: если гасить ее у кромки, между
             // строкой и пилюлей проступает фон окна — прозрачная полоса.
+            // Рамки у нее нет: кант живет отдельным слоем, под маской.
             color: panel.fillColor
-            border.width: Theme.hairline
-            border.color: panel.borderColor
             topLeftRadius: panel.topRadius
             topRightRadius: panel.topRadius
             bottomLeftRadius: panel.bottomRadius
             bottomRightRadius: panel.bottomRadius
 
+            // Блик: свет ложится на верхнюю треть капсулы и сходит на нет к
+            // середине. Без него матовая заливка выглядит мутным пятном.
+            Rectangle {
+                anchors.fill: parent
+                antialiasing: true
+                topLeftRadius: panel.topRadius
+                topRightRadius: panel.topRadius
+                bottomLeftRadius: panel.bottomRadius
+                bottomRightRadius: panel.bottomRadius
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: panel.sheenColor }
+                    GradientStop {
+                        position: 0.5
+                        color: Qt.rgba(panel.sheenColor.r, panel.sheenColor.g,
+                                       panel.sheenColor.b, 0)
+                    }
+                    GradientStop {
+                        position: 1.0
+                        color: Qt.rgba(panel.sheenColor.r, panel.sheenColor.g,
+                                       panel.sheenColor.b, 0)
+                    }
+                }
+            }
         }
 
-        // Внутренний блик: без него стекло выглядит просто мутным пятном.
-        Rectangle {
+        // Стеклянный кант: холодный контур снаружи и светлая нить внутри.
+        // Оба под маской, которая гасит их к нижнему краю: строка списка
+        // уходит под пилюлю, и ровная нить по кругу перечеркивала бы ее.
+        Item {
+            id: rim
             anchors.fill: parent
-            anchors.margins: Theme.hairline
-            color: "transparent"
-            antialiasing: true
-            border.width: Theme.hairline
-            border.color: panel.edgeColor
-            topLeftRadius: Math.max(0, panel.topRadius - Theme.hairline)
-            topRightRadius: Math.max(0, panel.topRadius - Theme.hairline)
-            bottomLeftRadius: Math.max(0, panel.bottomRadius - Theme.hairline)
-            bottomRightRadius: Math.max(0, panel.bottomRadius - Theme.hairline)
+            layer.enabled: true
+            layer.effect: MultiEffect {
+                maskEnabled: true
+                maskSource: rimTexture
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 1.0
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                color: "transparent"
+                antialiasing: true
+                border.width: Theme.hairline
+                border.color: panel.borderColor
+                topLeftRadius: panel.topRadius
+                topRightRadius: panel.topRadius
+                bottomLeftRadius: panel.bottomRadius
+                bottomRightRadius: panel.bottomRadius
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                anchors.margins: Theme.hairline
+                color: "transparent"
+                antialiasing: true
+                border.width: Theme.hairline
+                border.color: panel.edgeColor
+                topLeftRadius: Math.max(0, panel.topRadius - Theme.hairline)
+                topRightRadius: Math.max(0, panel.topRadius - Theme.hairline)
+                bottomLeftRadius: Math.max(0, panel.bottomRadius - Theme.hairline)
+                bottomRightRadius: Math.max(0, panel.bottomRadius - Theme.hairline)
+            }
+        }
+
+        // Маска канта: как и у стекла, «пусто» здесь записано половиной —
+        // порог маски срезает все, что ниже.
+        Item {
+            id: rimShape
+            anchors.fill: parent
+            visible: false
+
+            Rectangle {
+                anchors.fill: parent
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#FFFFFF" }
+                    GradientStop { position: 0.45; color: Qt.rgba(1, 1, 1, 0.85) }
+                    GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0.5) }
+                }
+            }
+        }
+
+        ShaderEffectSource {
+            id: rimTexture
+            anchors.fill: parent
+            visible: false
+            live: true
+            hideSource: true
+            sourceItem: rimShape
         }
     }
 

@@ -86,8 +86,12 @@ Item {
             autoPaddingEnabled: false
             blurEnabled: true
             blur: panel.blurAmount
-            blurMax: 40
-            blurMultiplier: 0.6
+            // Радиус небольшой: под пилюлю уходит строка списка, и сильное
+            // размытие выбеливало ее до фона — на кромке текст обрывался.
+            // Замер по темной точке текста: при 40 она белеет до 184, при 8
+            // остается около 100, то есть строка под стеклом еще читается.
+            blurMax: 8
+            blurMultiplier: 0.18
             maskEnabled: true
             maskSource: maskTexture
             // Порог именно 0.5: при нуле MultiEffect не отсекает ничего, и

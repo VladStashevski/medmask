@@ -57,8 +57,10 @@ QtObject {
     readonly property real rowHeight: 44
     readonly property real buttonHeight: 34
     readonly property real progressHeight: 12
-    // Полоса прогресса живет в одной строке с подписью и кнопкой.
-    readonly property real progressWidth: 180
+    // Полоса прогресса живет в одной строке с подписью, цифрами и кнопками
+    // и стоит там всегда, поэтому взята уже: со 180 в стартовом окне на
+    // подпись этапа не оставалось места, как только появлялась вторая кнопка.
+    readonly property real progressWidth: 140
     readonly property real statusIconSize: 16
     readonly property real fileIconWidth: 26
     readonly property real fileIconHeight: 32

@@ -422,21 +422,26 @@ class Controller(QObject):
 
     # ---------- вспомогательное ----------
 
-    @staticmethod
-    def _summary(result) -> str:
+    def _summary(self, result) -> str:
         successful = result.successful
         parts = [f"{successful} {plural(successful, 'файл', 'файла', 'файлов')}"]
-        if result.recognized_with_ocr:
-            parts.append(f"OCR {result.recognized_with_ocr}")
+        # Сначала то, что требует человека, потом справочное: строка узкая и
+        # обрезается с конца, а «проверить 1» пропустить нельзя — в отличие
+        # от числа распознанных сканов и длительности.
         if result.needs_review:
             parts.append(f"проверить {len(result.needs_review)}")
         if result.failed:
             parts.append(f"с ошибкой {result.failed}")
+        if result.recognized_with_ocr:
+            parts.append(f"OCR {result.recognized_with_ocr}")
         skipped = sum(result.skipped_by_extension.values())
         if skipped:
             parts.append(f"пропущено {skipped}")
-        # Имя созданной папки прямо в итоге: не нужно гадать, куда лег результат.
-        parts.append(result.output_dir.name)
+        # Длительность стоит здесь, а не отдельной подписью: рядом с двумя
+        # кнопками на нее не остается места, а имя созданной папки из итога
+        # убрано — до нее ведет кнопка «Открыть результат».
+        if self._elapsed >= 1:
+            parts.append(f"за {format_duration(self._elapsed)}")
         head = "Готово" if successful else "Ничего не создано"
         return f"{head}  ·  " + "  ·  ".join(parts)
 
@@ -472,9 +477,12 @@ class Controller(QObject):
         seconds = int(self._elapsed)
         percent = self._percent
         eta = ""
-        if self._get_busy() and 2 <= percent < 100 and seconds >= 3:
+        # Во время отмены оставшегося времени нет: работа не доедет до конца,
+        # и обещать «еще минуту» значит обещать неправду.
+        if self._state == RUNNING and 2 <= percent < 100 and seconds >= 3:
             remaining = round(seconds * (100 - percent) / percent)
-            eta = f"осталось ~{format_duration(remaining)}"
+            # Слово «осталось» стоит подписью в панели, здесь только число.
+            eta = f"~{format_duration(remaining)}"
         self._eta_text = eta
         self.progressChanged.emit()
 

@@ -13,10 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from . import OUTPUT_FOLDER_NAME
 from . import depersonalizer as engine
 
 
-OUTPUT_FOLDER_NAME = "Обезличенные"
 REPORT_FILE_NAME = "_ОТЧЁТ.txt"
 
 

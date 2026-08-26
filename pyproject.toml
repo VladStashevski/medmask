@@ -39,6 +39,7 @@ version = { attr = "medmask.__version__" }
 medmask = [
   "assets/*.onnx",
   "assets/*.ttf",
+  "assets/app_glyph.png",
   "assets/app_icon.png",
   "gui/qml/*.qml",
   "gui/qml/MedMask/*.qml",

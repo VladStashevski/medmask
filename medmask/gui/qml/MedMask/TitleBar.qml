@@ -53,7 +53,9 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: buttons.visible ? buttons.left : parent.right
         anchors.rightMargin: Theme.contentMargin
-        source: Qt.resolvedUrl("../../../assets/app_icon.png")
+        // В шапке — рисунок без белой подложки: фон у полосы уже есть, и
+        // плитка на нем читалась бы наклейкой поверх стекла.
+        source: Qt.resolvedUrl("../../../assets/app_glyph.png")
         sourceSize.width: 36
         sourceSize.height: 36
         width: 18

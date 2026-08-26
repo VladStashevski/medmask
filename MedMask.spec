@@ -24,6 +24,7 @@ datas = collect_data_files(
         "assets/*.onnx",
         "assets/*.ttf",
         "assets/app_icon.png",
+        "assets/app_glyph.png",
         "gui/qml/*.qml",
         "gui/qml/MedMask/*.qml",
         "gui/qml/MedMask/qmldir",

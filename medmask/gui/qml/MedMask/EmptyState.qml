@@ -26,6 +26,10 @@ Item {
 
         Rectangle {
             anchors.horizontalCenter: parent.horizontalCenter
+            // Папку значком не поясняем: он уже стоит в шапке слева от имени,
+            // и такой же в середине окна ничего не сообщает. Остальные виды
+            // заглушки говорят о состоянии, которого в шапке нет.
+            visible: placeholder.kind !== "folder"
             width: 54
             height: 54
             radius: width / 2
@@ -60,7 +64,7 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             visible: placeholder.hint !== ""
             text: placeholder.hint
-            color: Theme.muted
+            color: Theme.ink
             font.family: Theme.uiFamily
             font.pixelSize: Theme.fontSmall
             lineHeight: 1.35

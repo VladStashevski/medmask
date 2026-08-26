@@ -20,7 +20,7 @@ from PySide6.QtCore import (
     Slot,
 )
 
-from .. import __version__
+from .. import OUTPUT_FOLDER_NAME, __version__
 from .models import DocumentModel
 from .shell import breadcrumb, format_duration, open_folder, plural
 from .worker import BatchWorker, ScanWorker
@@ -122,15 +122,19 @@ class Controller(QObject):
             "scan": "Читаем папку",
             "none": "Нет подходящих документов",
             "error": "Обработка не начата",
-            "folder": "Папка не выбрана",
+            "folder": "Выберите папку с документами",
         }.get(self._get_empty_kind(), "")
 
     def _get_empty_hint(self) -> str:
         kind = self._get_empty_kind()
         if kind == "folder":
-            # Пояснение уже стоит в нижней панели, второй раз посреди окна
-            # оно только заполняет место.
-            return ""
+            # Середина окна — единственное место, где можно сказать, что
+            # программа вообще сделает. Шапка на это не годится: там строка
+            # состояния, и «папка не выбрана» она сообщает сама.
+            return (
+                f"Рядом с ней появится папка «{OUTPUT_FOLDER_NAME}» — "
+                "те же документы без персональных данных"
+            )
         if kind == "none":
             return f"Подходят {FORMATS}"
         if kind == "error":

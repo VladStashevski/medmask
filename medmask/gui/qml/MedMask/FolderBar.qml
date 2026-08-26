@@ -51,9 +51,12 @@ GlassPanel {
         Rectangle {
             id: tile
             anchors.verticalCenter: parent.verticalCenter
-            width: 30
-            height: 30
-            radius: 8
+            // Плитка ростом с кнопку на другом конце пилюли: два предмета
+            // одной высоты держат строку, а мельче кнопки значок выглядел
+            // случайно уменьшенным.
+            width: Theme.buttonHeight
+            height: Theme.buttonHeight
+            radius: 10
             antialiasing: true
             color: bar.known
                 ? Qt.rgba(Theme.primary.r, Theme.primary.g, Theme.primary.b, Theme.tintSoft)
@@ -63,7 +66,7 @@ GlassPanel {
             Glyph {
                 anchors.centerIn: parent
                 name: "folder"
-                size: 17
+                size: 19
                 weight: 1.7
                 color: bar.known ? Theme.primary : Theme.muted
                 Behavior on color { ColorAnimation { duration: Theme.base } }
@@ -82,7 +85,7 @@ GlassPanel {
                 width: parent.width
                 text: bar.folderName
                 elide: Text.ElideMiddle
-                color: bar.known ? Theme.ink : Theme.muted
+                color: Theme.ink
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontBody
                 font.weight: Font.DemiBold
@@ -93,7 +96,7 @@ GlassPanel {
                 width: parent.width
                 text: bar.folderPath
                 elide: Text.ElideMiddle
-                color: Theme.muted
+                color: Theme.ink
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontMicro
             }
@@ -111,7 +114,7 @@ GlassPanel {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: bar.width > 470 && text !== ""
                 text: bar.width > 640 ? bar.countLabel : bar.countCompact
-                color: Theme.muted
+                color: Theme.ink
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontSmall
                 opacity: text === "" ? 0 : 1

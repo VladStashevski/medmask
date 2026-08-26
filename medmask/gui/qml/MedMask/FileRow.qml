@@ -38,7 +38,10 @@ Item {
         id: icon
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
+        // Значок документа встает на ту же ось, что и плитка папки в шапке:
+        // отступ у них общий, а разницу в ширине снимает половина остатка.
         anchors.leftMargin: Theme.pillMargin + Theme.pillPadding
+                            + (Theme.buttonHeight - Theme.fileIconWidth) / 2
         kind: row.kind
         opacity: row.status === "failed" ? 0.55 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
@@ -48,12 +51,14 @@ Item {
         id: label
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: icon.right
-        anchors.leftMargin: Theme.space3
+        // Имя документа начинается там же, где имя папки в шапке: значок
+        // сдвинулся, и прежний отступ увел бы строку левее заголовка.
+        anchors.leftMargin: Theme.space4
         anchors.right: state.left
         anchors.rightMargin: Theme.space4
         text: row.name
         elide: Text.ElideMiddle
-        color: row.status === "failed" ? Theme.muted : Theme.ink
+        color: Theme.ink
         font.family: Theme.uiFamily
         font.pixelSize: Theme.fontBody
         Behavior on color { ColorAnimation { duration: Theme.base } }
@@ -99,7 +104,7 @@ Item {
             horizontalAlignment: Text.AlignLeft
             text: row.statusText
             elide: Text.ElideRight
-            color: row.status === "" ? Theme.faint : Theme.statusColor(row.status)
+            color: row.status === "" ? Theme.ink : Theme.statusColor(row.status)
             font.family: Theme.uiFamily
             font.pixelSize: Theme.fontSmall
             Behavior on color { ColorAnimation { duration: Theme.base } }

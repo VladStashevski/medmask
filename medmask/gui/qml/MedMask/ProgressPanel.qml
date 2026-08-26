@@ -100,7 +100,7 @@ GlassPanel {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: panel.percentText !== "" && panel.timeText !== "" ? "·" : ""
-                color: Theme.faint
+                color: Theme.ink
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontSmall
                 visible: text !== ""
@@ -109,7 +109,7 @@ GlassPanel {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: panel.timeText
-                color: Theme.muted
+                color: Theme.ink
                 font.family: Theme.monoFamily
                 font.pixelSize: Theme.fontSmall
                 visible: text !== ""
@@ -120,7 +120,7 @@ GlassPanel {
                 // Оставшееся время — первая подпись, которой жертвует узкое
                 // окно: она самая длинная и самая приблизительная.
                 text: panel.etaText
-                color: Theme.faint
+                color: Theme.ink
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontSmall
                 visible: text !== "" && panel.width > Theme.windowWidth / 2

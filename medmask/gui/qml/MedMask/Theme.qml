@@ -103,9 +103,11 @@ QtObject {
     // и им хватает легкого осветления. Без системного стекла заливка плотнее,
     // иначе строки просвечивают сквозь пилюлю.
     readonly property color panelFill: systemBackdrop
-        ? Qt.rgba(1, 1, 1, 0.12)
-        : (glass ? Qt.rgba(1, 1, 1, 0.72) : "#FBFCFE")
-    readonly property color panelEdge: glass ? Qt.rgba(1, 1, 1, 0.85) : Qt.rgba(1, 1, 1, 0.9)
+        ? Qt.rgba(1, 1, 1, 0.35)
+        : (glass ? Qt.rgba(1, 1, 1, 0.82) : "#FBFCFE")
+    // Внутренний блик приглушен: яркая белая нить по кромке перечеркивала
+    // строку, которая проходит под пилюлей, и читалась как рез по прямой.
+    readonly property color panelEdge: glass ? Qt.rgba(1, 1, 1, 0.35) : Qt.rgba(1, 1, 1, 0.9)
     // Строки лежат прямо на стекле, поэтому подсветка чуть заметнее.
     readonly property color rowGlassHover: Qt.rgba(1, 1, 1, 0.45)
     // Исходный цвет подсветки — прозрачный белый, а не «transparent»:

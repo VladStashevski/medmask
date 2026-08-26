@@ -107,14 +107,14 @@ QtObject {
         : (glass ? Qt.rgba(1, 1, 1, 0.82) : "#FBFCFE")
     // Внутренний блик приглушен: яркая белая нить по кромке перечеркивала
     // строку, которая проходит под пилюлей, и читалась как рез по прямой.
-    readonly property color panelEdge: glass ? Qt.rgba(1, 1, 1, 0.35) : Qt.rgba(1, 1, 1, 0.9)
+    readonly property color panelEdge: Qt.rgba(1, 1, 1, 0)
     // Строки лежат прямо на стекле, поэтому подсветка чуть заметнее.
     readonly property color rowGlassHover: Qt.rgba(1, 1, 1, 0.45)
     // Исходный цвет подсветки — прозрачный белый, а не «transparent»:
     // «transparent» это прозрачный черный, и переход к белому проходит
     // через серую вспышку.
     readonly property color rowIdle: Qt.rgba(1, 1, 1, 0)
-    readonly property color panelBorder: Qt.rgba(0.06, 0.09, 0.16, 0.10)
+    readonly property color panelBorder: Qt.rgba(0.06, 0.09, 0.16, 0)
 
     // Список читают глазами, поэтому он заметно плотнее панелей.
     readonly property color cardFill: systemBackdrop ? "transparent" : "#FFFFFF"

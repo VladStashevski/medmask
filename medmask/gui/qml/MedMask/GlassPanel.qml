@@ -28,10 +28,9 @@ Item {
     // Насколько мягко пилюля вступает на строку. Разом она этого делать не
     // должна: строка на кромке получала бы ступеньку — сверху четко и темно,
     // снизу размыто и бледно, и ступенька читается как рез.
-    property real edgeSoftness: 14
+    property real edgeSoftness: 20
 
     readonly property real softStop: Math.min(0.45, edgeSoftness / Math.max(1, height))
-    readonly property color clearFill: Qt.rgba(fillColor.r, fillColor.g, fillColor.b, 0)
 
     default property alias content: holder.data
 
@@ -104,8 +103,8 @@ Item {
             // размытие выбеливало ее до фона — на кромке текст обрывался.
             // Замер по темной точке текста: при 40 она белеет до 184, при 8
             // остается около 100, то есть строка под стеклом еще читается.
-            blurMax: 14
-            blurMultiplier: 0.3
+            blurMax: 6
+            blurMultiplier: 0.15
             maskEnabled: true
             maskSource: maskTexture
             // Порог именно 0.5: при нуле MultiEffect не отсекает ничего, и
@@ -117,12 +116,9 @@ Item {
         Rectangle {
             anchors.fill: parent
             antialiasing: true
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: panel.clearFill }
-                GradientStop { position: panel.softStop; color: panel.fillColor }
-                GradientStop { position: 1 - panel.softStop; color: panel.fillColor }
-                GradientStop { position: 1.0; color: panel.clearFill }
-            }
+            // Заливка ровная до самого края: если гасить ее у кромки, между
+            // строкой и пилюлей проступает фон окна — прозрачная полоса.
+            color: panel.fillColor
             border.width: Theme.hairline
             border.color: panel.borderColor
             topLeftRadius: panel.topRadius

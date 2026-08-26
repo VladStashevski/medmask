@@ -50,8 +50,11 @@ Window {
 
         DocumentList {
             anchors.fill: parent
-            headerHeight: Theme.toolbarHeight
-            footerHeight: Theme.statusHeight
+            // Строки доезжают до дальнего края пилюли и растворяются под ней.
+            anchors.topMargin: Theme.titleBarHeight
+            anchors.bottomMargin: Theme.pillMargin
+            headerHeight: Theme.pillHeight
+            footerHeight: Theme.pillHeight
             model: controller.documents
             opacity: controller.showList ? 1 : 0
             visible: opacity > 0

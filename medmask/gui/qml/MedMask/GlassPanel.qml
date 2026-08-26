@@ -90,6 +90,10 @@ Item {
             blurMultiplier: 0.6
             maskEnabled: true
             maskSource: maskTexture
+            // Порог именно 0.5: при нуле MultiEffect не отсекает ничего, и
+            // размытие ложится прямоугольником — его углы торчат за капсулу.
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 0.15
         }
 
         Rectangle {

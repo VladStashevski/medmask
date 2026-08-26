@@ -16,7 +16,7 @@ QtObject {
 
     property bool glass: true
     property bool systemBackdrop: false
-    property real glassOpacity: 0.68
+    property real glassOpacity: 0.8
     property bool motion: true
 
     // ---------- ритм ----------
@@ -99,9 +99,9 @@ QtObject {
     readonly property color glowCool: Qt.rgba(0.62, 0.76, 0.98, 0.30)
     readonly property color glowWarm: Qt.rgba(1, 1, 1, 0.65)
 
-    // Панели не подкладывают белый лист: под ними системное матовое стекло,
+    // Пилюли не подкладывают белый лист: под ними системное матовое стекло,
     // и им хватает легкого осветления. Без системного стекла заливка плотнее,
-    // иначе строки просвечивают сквозь панель.
+    // иначе строки просвечивают сквозь пилюлю.
     readonly property color panelFill: systemBackdrop
         ? Qt.rgba(1, 1, 1, 0.12)
         : (glass ? Qt.rgba(1, 1, 1, 0.72) : "#FBFCFE")

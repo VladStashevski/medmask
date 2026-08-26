@@ -1,14 +1,18 @@
 import QtQuick
+import QtQuick.Effects
 import MedMask
 
 /*
   Список документов. Держит на экране только видимые строки, поэтому папка на
   тысячу файлов открывается так же быстро, как папка на десять.
 
-  Список идет во всю высоту окна, а пилюли лежат на нем: строки проходят под
-  ними — ради этого пилюли и матовые. Отступы сверху и снизу заданы полями
-  прокрутки, а не обрезкой, поэтому первая строка начинается под верхней
-  пилюлей, а последняя доезжает до нижней и уходит под нее.
+  Строка уходит под пилюлю и видна под ней до самого дальнего ее края, но
+  ровно по ее силуэту: обрезанная по прямой строка выглядывала бы из-за
+  скругленных концов капсулы полоской и углом — и слева, и справа.
+
+  headerHeight и footerHeight — сколько сверху и снизу закрыто пилюлей: на
+  столько отступают поля прокрутки, поэтому первая строка стоит под верхней
+  пилюлей, а последняя доезжает до нижней и скрывается.
 */
 Item {
     id: list
@@ -17,32 +21,92 @@ Item {
     property real headerHeight: 0
     property real footerHeight: 0
 
-    ListView {
-        id: view
+    // Обрезка сделана маской слоя, а не накладкой: окно прозрачное, и
+    // накладка любого цвета легла бы на обои мутным пятном.
+    Item {
+        id: viewport
         anchors.fill: parent
-        clip: true
-        // Список не участвует в обходе по Tab: он не действие, а содержимое,
-        // и без видимой рамки фокус на нем выглядел бы потерянным.
-        activeFocusOnTab: false
-        boundsBehavior: Flickable.StopAtBounds
-        maximumFlickVelocity: 2200
-        cacheBuffer: Theme.rowHeight * 6
-        topMargin: list.headerHeight + Theme.space2
-        bottomMargin: list.footerHeight + Theme.space2
-
-        delegate: FileRow {
-            width: view.width
-            name: model.name
-            kind: model.kind
-            status: model.status
-            statusText: model.statusText
-            badge: model.badge
-            hovered: pointer.hovered
-
-            HoverHandler { id: pointer }
-
-            onStatusChanged: if (status === "active") list.follow(index)
+        layer.enabled: true
+        layer.effect: MultiEffect {
+            maskEnabled: true
+            maskSource: fadeMask
+            // Порог именно 0.5: при нуле MultiEffect не отсекает ничего —
+            // «ниже нуля» пикселей не бывает, и маска висит вхолостую.
+            maskThresholdMin: 0.5
+            maskSpreadAtMin: 0.15
         }
+
+        ListView {
+            id: view
+            objectName: "documents"
+            anchors.fill: parent
+            clip: true
+            // Список не участвует в обходе по Tab: он не действие, а содержимое,
+            // и без видимой рамки фокус на нем выглядел бы потерянным.
+            activeFocusOnTab: false
+            boundsBehavior: Flickable.StopAtBounds
+            maximumFlickVelocity: 2200
+            cacheBuffer: Theme.rowHeight * 6
+            topMargin: list.headerHeight + Theme.space2
+            bottomMargin: list.footerHeight + Theme.space2
+
+            delegate: FileRow {
+                width: view.width
+                name: model.name
+                kind: model.kind
+                status: model.status
+                statusText: model.statusText
+                badge: model.badge
+                hovered: pointer.hovered
+
+                HoverHandler { id: pointer }
+
+                onStatusChanged: if (status === "active") list.follow(index)
+            }
+        }
+    }
+
+    // Сама маска — полоса между пилюлями плюс силуэты обеих пилюль: строка
+    // видна на просвет ровно там, где ее прикрывает капсула, и нигде больше.
+    Item {
+        id: fadeShape
+        anchors.fill: parent
+        visible: false
+
+        Rectangle {
+            y: list.headerHeight
+            width: parent.width
+            height: Math.max(0, parent.height - list.headerHeight - list.footerHeight)
+            color: "#FFFFFF"
+        }
+
+        Rectangle {
+            x: Theme.pillMargin
+            width: Math.max(0, parent.width - Theme.pillMargin * 2)
+            height: list.headerHeight
+            radius: Theme.pillRadius
+            antialiasing: true
+            color: "#FFFFFF"
+        }
+
+        Rectangle {
+            x: Theme.pillMargin
+            y: parent.height - list.footerHeight
+            width: Math.max(0, parent.width - Theme.pillMargin * 2)
+            height: list.footerHeight
+            radius: Theme.pillRadius
+            antialiasing: true
+            color: "#FFFFFF"
+        }
+    }
+
+    ShaderEffectSource {
+        id: fadeMask
+        anchors.fill: parent
+        visible: false
+        live: true
+        hideSource: true
+        sourceItem: fadeShape
     }
 
     // Показывать строку, которая обрабатывается прямо сейчас. Прыжки

@@ -76,7 +76,7 @@ class Environment(QObject):
         try:
             value = float(raw)
         except ValueError:
-            return 0.68
+            return 0.8
         return min(1.0, max(0.2, value))
 
     def _get_system_backdrop(self) -> bool:

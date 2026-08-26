@@ -10,6 +10,10 @@ import MedMask
   ровно по ее силуэту: обрезанная по прямой строка выглядывала бы из-за
   скругленных концов капсулы полоской и углом — и слева, и справа.
 
+  Подходя к пилюле, строка гаснет. Без этого кромка стекла режет ее по прямой:
+  над кромкой строка четкая, под кромкой размытая, и разрыв читается как
+  обрубленный текст.
+
   headerHeight и footerHeight — сколько сверху и снизу закрыто пилюлей: на
   столько отступают поля прокрутки, поэтому первая строка стоит под верхней
   пилюлей, а последняя доезжает до нижней и скрывается.
@@ -26,7 +30,9 @@ Item {
     Item {
         id: viewport
         anchors.fill: parent
-        layer.enabled: true
+        // Слой с маской живет только вместе со стеклом: программный рендерер
+        // не умеет ни слоев, ни шейдеров, и список остался бы пустым местом.
+        layer.enabled: Theme.glass
         layer.effect: MultiEffect {
             maskEnabled: true
             maskSource: fadeMask
@@ -58,6 +64,17 @@ Item {
                 statusText: model.statusText
                 badge: model.badge
                 hovered: pointer.hovered
+
+                // Гаснуть строка начинает за свою высоту до пилюли и гаснет
+                // совсем у ее дальнего края: к кромке стекла, где четкое
+                // сменяется размытым, она подходит уже вполсилы.
+                opacity: {
+                    var top = y - view.contentY;
+                    var above = top / Math.max(1, list.headerHeight + height);
+                    var below = (view.height - (top + height))
+                                / Math.max(1, list.footerHeight + height);
+                    return Math.max(0, Math.min(1, Math.min(above, below)));
+                }
 
                 HoverHandler { id: pointer }
 

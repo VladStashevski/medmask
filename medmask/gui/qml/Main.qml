@@ -50,11 +50,14 @@ Window {
 
         DocumentList {
             anchors.fill: parent
-            // Строки доезжают до дальнего края пилюли и растворяются под ней.
-            anchors.topMargin: Theme.titleBarHeight
-            anchors.bottomMargin: Theme.pillMargin
-            headerHeight: Theme.pillHeight
-            footerHeight: Theme.pillHeight
+            // Строки уходят под пилюли и видны сквозь стекло. Обрезает их
+            // маска на шейдере, а без стекла (высокий контраст, программный
+            // рендерер) шейдеров нет — тогда список просто кончается там,
+            // где начинается пилюля.
+            anchors.topMargin: Theme.glass ? Theme.titleBarHeight : Theme.toolbarHeight
+            anchors.bottomMargin: Theme.glass ? Theme.pillMargin : Theme.statusHeight
+            headerHeight: Theme.glass ? Theme.pillHeight : 0
+            footerHeight: Theme.glass ? Theme.pillHeight : 0
             model: controller.documents
             opacity: controller.showList ? 1 : 0
             visible: opacity > 0

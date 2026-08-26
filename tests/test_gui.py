@@ -356,9 +356,14 @@ def test_real_run_produces_pdfs_without_blocking_the_window(application, tmp_pat
 def test_qml_loads_without_warnings(application) -> None:
     messages: list[str] = []
 
+    # Жалобы самой системы на шрифты к интерфейсу отношения не имеют: Qt
+    # больше не возит свои шрифты, и на чистой машине без них он ворчит еще
+    # до того, как увидит хоть один QML-файл.
+    system_noise = ("Populating font family aliases", "QFontDatabase:")
+
     def collect(mode, context, message):
         if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
-            if "Populating font family aliases" in message:
+            if any(noise in message for noise in system_noise):
                 return
             messages.append(message)
 

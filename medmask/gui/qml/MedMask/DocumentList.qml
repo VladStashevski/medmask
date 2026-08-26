@@ -6,13 +6,10 @@ import MedMask
   Список документов. Держит на экране только видимые строки, поэтому папка на
   тысячу файлов открывается так же быстро, как папка на десять.
 
-  Строка уходит под пилюлю и видна под ней до самого дальнего ее края, но
-  ровно по ее силуэту: обрезанная по прямой строка выглядывала бы из-за
-  скругленных концов капсулы полоской и углом — и слева, и справа.
-
-  Подходя к пилюле, строка гаснет. Без этого кромка стекла режет ее по прямой:
-  над кромкой строка четкая, под кромкой размытая, и разрыв читается как
-  обрубленный текст.
+  Подходя к пилюле, строка растворяется и под стекло уходит уже прозрачной.
+  Растворяется именно по вертикали, а не гаснет целиком: кромка стекла делит
+  строку надвое — над кромкой четкая, под кромкой размытая, — и разрыв
+  читается как обрубленный текст. Растворять нечего, если строки там уже нет.
 
   headerHeight и footerHeight — сколько сверху и снизу закрыто пилюлей: на
   столько отступают поля прокрутки, поэтому первая строка стоит под верхней
@@ -24,6 +21,18 @@ Item {
     property alias model: view.model
     property real headerHeight: 0
     property real footerHeight: 0
+
+    // Насколько строка растворяется, подходя к пилюле.
+    readonly property real fade: Theme.pillHeight / 2
+
+    function share(y) { return Math.min(1, Math.max(0, y / Math.max(1, height))); }
+
+    readonly property real hiddenTop: share(headerHeight - fade)
+    readonly property real solidTop: Math.max(hiddenTop, share(headerHeight + fade))
+    readonly property real hiddenBottom: Math.max(
+        solidTop, share(height - footerHeight + fade))
+    readonly property real solidBottom: Math.max(
+        solidTop, Math.min(hiddenBottom, share(height - footerHeight - fade)))
 
     // Обрезка сделана маской слоя, а не накладкой: окно прозрачное, и
     // накладка любого цвета легла бы на обои мутным пятном.
@@ -39,7 +48,7 @@ Item {
             // Порог именно 0.5: при нуле MultiEffect не отсекает ничего —
             // «ниже нуля» пикселей не бывает, и маска висит вхолостую.
             maskThresholdMin: 0.5
-            maskSpreadAtMin: 0.15
+            maskSpreadAtMin: 0.5
         }
 
         ListView {
@@ -65,17 +74,6 @@ Item {
                 badge: model.badge
                 hovered: pointer.hovered
 
-                // Гаснуть строка начинает за свою высоту до пилюли и гаснет
-                // совсем у ее дальнего края: к кромке стекла, где четкое
-                // сменяется размытым, она подходит уже вполсилы.
-                opacity: {
-                    var top = y - view.contentY;
-                    var above = top / Math.max(1, list.headerHeight + height);
-                    var below = (view.height - (top + height))
-                                / Math.max(1, list.footerHeight + height);
-                    return Math.max(0, Math.min(1, Math.min(above, below)));
-                }
-
                 HoverHandler { id: pointer }
 
                 onStatusChanged: if (status === "active") list.follow(index)
@@ -83,37 +81,24 @@ Item {
         }
     }
 
-    // Сама маска — полоса между пилюлями плюс силуэты обеих пилюль: строка
-    // видна на просвет ровно там, где ее прикрывает капсула, и нигде больше.
+    // Сама маска: непрозрачная между пилюлями и сходящая на нет к их кромке.
+    // Порог отсекает нижнюю половину полутонов, поэтому полоса перехода в
+    // маске вдвое шире того, что видно на экране.
     Item {
         id: fadeShape
         anchors.fill: parent
         visible: false
 
         Rectangle {
-            y: list.headerHeight
-            width: parent.width
-            height: Math.max(0, parent.height - list.headerHeight - list.footerHeight)
-            color: "#FFFFFF"
-        }
-
-        Rectangle {
-            x: Theme.pillMargin
-            width: Math.max(0, parent.width - Theme.pillMargin * 2)
-            height: list.headerHeight
-            radius: Theme.pillRadius
-            antialiasing: true
-            color: "#FFFFFF"
-        }
-
-        Rectangle {
-            x: Theme.pillMargin
-            y: parent.height - list.footerHeight
-            width: Math.max(0, parent.width - Theme.pillMargin * 2)
-            height: list.footerHeight
-            radius: Theme.pillRadius
-            antialiasing: true
-            color: "#FFFFFF"
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0) }
+                GradientStop { position: list.hiddenTop; color: Qt.rgba(1, 1, 1, 0) }
+                GradientStop { position: list.solidTop; color: "#FFFFFF" }
+                GradientStop { position: list.solidBottom; color: "#FFFFFF" }
+                GradientStop { position: list.hiddenBottom; color: Qt.rgba(1, 1, 1, 0) }
+                GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0) }
+            }
         }
     }
 

@@ -26,6 +26,7 @@ from .theme import (
     CARD,
     DANGER,
     FAINT,
+    GHOST_STYLE,
     HAIRLINE,
     INK,
     MUTED,

@@ -4,6 +4,9 @@ import MedMask
 /*
   Строка документа: значок вида и имя слева, состояние справа. Плотная —
   список остается главным содержимым окна, а не набором карточек.
+
+  Плашка строки повторяет пилюли: те же поля по бокам и такая же капсула,
+  поэтому подсветка строки и панели стоят на одной вертикали.
 */
 Item {
     id: row
@@ -19,11 +22,11 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        anchors.leftMargin: Theme.space1
-        anchors.rightMargin: Theme.space1
+        anchors.leftMargin: Theme.pillMargin
+        anchors.rightMargin: Theme.pillMargin
         anchors.topMargin: 1
         anchors.bottomMargin: 1
-        radius: Theme.rowRadius
+        radius: height / 2
         antialiasing: true
         color: row.status === "active" ? Theme.rowActive
              : row.hovered ? (Theme.systemBackdrop ? Theme.rowGlassHover : Theme.rowHover)
@@ -35,7 +38,7 @@ Item {
         id: icon
         anchors.verticalCenter: parent.verticalCenter
         anchors.left: parent.left
-        anchors.leftMargin: Theme.space3
+        anchors.leftMargin: Theme.pillMargin + Theme.pillPadding
         kind: row.kind
         opacity: row.status === "failed" ? 0.55 : 1
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
@@ -60,7 +63,7 @@ Item {
         id: state
         anchors.verticalCenter: parent.verticalCenter
         anchors.right: parent.right
-        anchors.rightMargin: Theme.space4
+        anchors.rightMargin: Theme.pillMargin + Theme.pillPadding
         spacing: Theme.space2
 
         Rectangle {

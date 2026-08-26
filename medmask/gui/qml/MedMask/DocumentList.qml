@@ -5,8 +5,10 @@ import MedMask
   Список документов. Держит на экране только видимые строки, поэтому папка на
   тысячу файлов открывается так же быстро, как папка на десять.
 
-  Строки уходят под панель инструментов и под нижнюю панель — ради этого они
-  и матовые: движение под стеклом видно, а имена остаются читаемыми.
+  Список идет во всю высоту окна, а пилюли лежат на нем: строки проходят под
+  ними — ради этого пилюли и матовые. Отступы сверху и снизу заданы полями
+  прокрутки, а не обрезкой, поэтому первая строка начинается под верхней
+  пилюлей, а последняя доезжает до нижней и уходит под нее.
 */
 Item {
     id: list
@@ -18,10 +20,6 @@ Item {
     ListView {
         id: view
         anchors.fill: parent
-        anchors.topMargin: list.headerHeight
-        anchors.bottomMargin: list.footerHeight
-        // Клип по прямоугольнику: строки не доходят до скругленных углов
-        // карточки, поэтому подсветка их не задевает.
         clip: true
         // Список не участвует в обходе по Tab: он не действие, а содержимое,
         // и без видимой рамки фокус на нем выглядел бы потерянным.
@@ -29,8 +27,8 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         maximumFlickVelocity: 2200
         cacheBuffer: Theme.rowHeight * 6
-        bottomMargin: Theme.space2
-        topMargin: Theme.space1
+        topMargin: list.headerHeight + Theme.space2
+        bottomMargin: list.footerHeight + Theme.space2
 
         delegate: FileRow {
             width: view.width
@@ -58,6 +56,18 @@ Item {
             followTimer.start();
     }
 
+    // Видимая часть списка — не все окно: сверху и снизу его закрывают
+    // пилюли, и строка, подведенная к самому краю, оказалась бы под стеклом.
+    readonly property real visibleTop: view.contentY + list.headerHeight
+    readonly property real visibleBottom: view.contentY + view.height - list.footerHeight
+
+    function scrollTo(position) {
+        var lowest = -view.topMargin;
+        var highest = Math.max(
+            lowest, view.contentHeight + view.bottomMargin - view.height);
+        view.contentY = Math.max(lowest, Math.min(highest, position));
+    }
+
     Timer {
         id: followTimer
         property int target: -1
@@ -67,11 +77,15 @@ Item {
                 return;
             var top = target * Theme.rowHeight;
             var bottom = top + Theme.rowHeight;
-            if (top < view.contentY || bottom > view.contentY + view.height)
-                view.positionViewAtIndex(target, ListView.Contain);
+            if (top < list.visibleTop)
+                list.scrollTo(top - list.headerHeight);
+            else if (bottom > list.visibleBottom)
+                list.scrollTo(bottom + list.footerHeight - view.height);
         }
     }
 
+    // Полоса прокрутки живет между пилюлями, а не во всю высоту окна: под
+    // стеклом от нее остался бы только размытый след.
     Rectangle {
         id: scrollbar
         anchors.right: parent.right
@@ -80,15 +94,18 @@ Item {
         radius: 2
         antialiasing: true
         color: Theme.faint
-        visible: view.contentHeight > view.height + 1
+
+        readonly property real band: Math.max(
+            0, view.height - list.headerHeight - list.footerHeight - Theme.space2 * 2)
+        readonly property real span: Math.max(
+            1, view.contentHeight + view.topMargin + view.bottomMargin - view.height)
+        readonly property real shift: Math.min(
+            1, Math.max(0, (view.contentY + view.topMargin) / span))
+
+        visible: view.contentHeight > band + 1
         opacity: view.moving || scrollHover.hovered ? 0.65 : 0.28
-        y: view.y + Theme.space2
-           + (view.height - Theme.space2 * 2 - height)
-             * (view.contentHeight > view.height
-                ? Math.min(1, Math.max(0, view.contentY / (view.contentHeight - view.height)))
-                : 0)
-        height: Math.max(28, (view.height - Theme.space2 * 2)
-                             * Math.min(1, view.height / Math.max(1, view.contentHeight)))
+        y: view.y + list.headerHeight + Theme.space2 + (band - height) * shift
+        height: Math.max(28, band * Math.min(1, band / Math.max(1, view.contentHeight)))
 
         Behavior on opacity { NumberAnimation { duration: Theme.base } }
     }

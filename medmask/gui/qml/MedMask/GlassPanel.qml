@@ -33,7 +33,10 @@ Item {
     Item {
         id: body
         anchors.fill: parent
-        layer.enabled: panel.elevated
+        // Тень снимается общим слоем поверх панели, а размытое стекло такого
+        // слоя не переживает: Qt отдает его сплошным пятном. У матовой панели
+        // тени нет — ее отделяет само размытие; на непрозрачной тень остается.
+        layer.enabled: panel.elevated && !panel.frosted
         layer.effect: MultiEffect {
             shadowEnabled: true
             shadowBlur: 0.7

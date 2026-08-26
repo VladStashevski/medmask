@@ -6,11 +6,12 @@ import MedMask
 /*
   Окно MedMask.
 
-  Одна поверхность от края до края: сверху панель инструментов, снизу панель
-  состояния, между ними список. Панели матовые и лежат поверх списка, поэтому
-  строки уходят под них, а не обрываются на границе карточки.
+  Одна прозрачная поверхность от края до края, полоса со значком включительно.
+  Панели не делят ее на полосы: папка сверху и состояние снизу лежат на ней
+  двумя пилюлями одной высоты, а список идет во всю высоту окна и уходит под
+  них — потому пилюли и матовые.
 
-  Слой behind — то, что видно сквозь стекло. Панели живут рядом с ним, а не
+  Слой behind — то, что видно сквозь стекло. Пилюли живут рядом с ним, а не
   внутри: слепок для размытия берется по их собственным x и y, и вложенность
   дала бы рекурсию.
 */
@@ -50,7 +51,7 @@ Window {
         DocumentList {
             anchors.fill: parent
             headerHeight: Theme.toolbarHeight
-            footerHeight: statusPanel.height
+            footerHeight: Theme.statusHeight
             model: controller.documents
             opacity: controller.showList ? 1 : 0
             visible: opacity > 0
@@ -60,7 +61,7 @@ Window {
         EmptyState {
             anchors.fill: parent
             anchors.topMargin: Theme.toolbarHeight
-            anchors.bottomMargin: statusPanel.height
+            anchors.bottomMargin: Theme.statusHeight
             kind: controller.emptyKind
             title: controller.emptyTitle
             hint: controller.emptyHint
@@ -70,12 +71,14 @@ Window {
         }
     }
 
-    // ---------- матовые панели поверх списка ----------
+    // ---------- матовые пилюли поверх списка ----------
 
     FolderBar {
         id: folderBar
-        width: parent.width
-        height: Theme.toolbarHeight
+        x: Theme.pillMargin
+        y: Theme.titleBarHeight
+        width: parent.width - Theme.pillMargin * 2
+        height: Theme.pillHeight
         blurSource: behind
 
         folderName: controller.folderName
@@ -92,8 +95,10 @@ Window {
 
     ProgressPanel {
         id: statusPanel
-        width: parent.width
-        y: parent.height - height
+        x: Theme.pillMargin
+        y: parent.height - height - Theme.pillMargin
+        width: parent.width - Theme.pillMargin * 2
+        height: Theme.pillHeight
         blurSource: behind
 
         stageText: controller.stageText

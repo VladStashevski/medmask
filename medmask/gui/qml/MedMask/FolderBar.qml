@@ -2,13 +2,12 @@ import QtQuick
 import MedMask
 
 /*
-  Панель инструментов: какая папка открыта, сколько в ней документов и кнопка
-  выбора. Идет во всю ширину окна без черты и рамки — окно остается одной
-  поверхностью, а панель выдает только матовость, когда под нее уходят строки.
+  Пилюля папки: какая папка открыта, сколько в ней документов и кнопка выбора.
+  Лежит поверх общей поверхности окна, а не делит его полосой, поэтому строки
+  списка проходят под ней и видны сквозь стекло.
 
-  Системные кнопки и значок программы живут строкой выше, поэтому папка
-  начинается там же, где имена документов. Заголовков колонок у списка нет:
-  назначение строк понятно и так.
+  Системные кнопки и значок программы живут выше, на самой поверхности:
+  пилюля начинается под ними и не мешает светофору.
 */
 GlassPanel {
     id: bar
@@ -19,19 +18,15 @@ GlassPanel {
     property string countCompact: ""
     property bool known: false
     property bool chooseEnabled: true
-    property real leftInset: 0
 
     signal chooseRequested()
     signal moveRequested()
     signal toggleMaximizeRequested()
 
-    implicitHeight: Theme.toolbarHeight
-    radius: 0
-    elevated: false
-    borderColor: "transparent"
-    edgeColor: "transparent"
+    implicitHeight: Theme.pillHeight
+    radius: Theme.pillRadius
 
-    // Окно тянется за всю панель, а не только за полосу системных кнопок.
+    // Окно тянется за всю пилюлю, а не только за полосу системных кнопок.
     // Область лежит под содержимым, поэтому кнопка забирает свои щелчки
     // первой, а подписи мышь не ловят и передают перетаскивание сюда.
     MouseArea {
@@ -49,12 +44,9 @@ GlassPanel {
     }
 
     Item {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: Theme.contentMargin
-        anchors.rightMargin: Theme.contentMargin
-        height: Theme.folderRowHeight
+        anchors.fill: parent
+        anchors.leftMargin: Theme.pillPadding
+        anchors.rightMargin: Theme.pillPadding
 
         Rectangle {
             id: tile

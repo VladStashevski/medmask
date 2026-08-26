@@ -36,23 +36,29 @@ QtObject {
     readonly property real contentMargin: 16
 
     readonly property real panelRadius: 12
-    readonly property real rowRadius: 8
     readonly property real windowRadius: 10
 
-    // Окно — одна поверхность. Сверху панель инструментов, снизу панель
-    // состояния, между ними список во всю ширину.
-    //
-    readonly property real panelPadding: 14
+    // Окно — одна прозрачная поверхность от края до края, полоса со значком
+    // включительно. Панели на ней не полосы, а пилюли: одна высота на обе,
+    // радиус в половину высоты, общий отступ от краев окна.
+    readonly property real pillHeight: 60
+    readonly property real pillRadius: pillHeight / 2
+    readonly property real pillMargin: 12
+    // Содержимое отступает от края пилюли ровно настолько, насколько кнопка
+    // внутри отступает сверху и снизу: вложенная пилюля садится по центру.
+    readonly property real pillPadding: (pillHeight - buttonHeight) / 2
 
-    // Верхняя полоса панели инструментов отдана системным кнопкам и значку
-    // программы: слева светофор macOS или свои кнопки Windows, справа значок.
-    // Папка идет второй строкой и начинается там же, где имена документов.
+    // Верхняя полоса отдана системным кнопкам и значку программы: слева
+    // светофор macOS или свои кнопки Windows, справа значок.
     readonly property real titleBarHeight: 30
-    readonly property real folderRowHeight: 44
-    readonly property real toolbarHeight: titleBarHeight + folderRowHeight
+    // Сколько занято сверху и снизу — на столько отступает список.
+    readonly property real toolbarHeight: titleBarHeight + pillHeight
+    readonly property real statusHeight: pillHeight + pillMargin
     readonly property real rowHeight: 44
     readonly property real buttonHeight: 34
     readonly property real progressHeight: 12
+    // Полоса прогресса живет в одной строке с подписью и кнопкой.
+    readonly property real progressWidth: 180
     readonly property real statusIconSize: 16
     readonly property real fileIconWidth: 26
     readonly property real fileIconHeight: 32

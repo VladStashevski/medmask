@@ -2,10 +2,12 @@ import QtQuick
 import MedMask
 
 /*
-  Нижняя панель: этап, процент, время, полоса и действия. Идет во всю ширину,
-  отступ сверху и снизу такой же, как у панели инструментов. Высота
-  постоянная — переход между состояниями меняет подписи и кнопки, но не
-  двигает верстку.
+  Пилюля состояния: этап, проценты, время, полоса и действия — все в одной
+  строке, чтобы высота совпадала с пилюлей папки. Высота постоянная: смена
+  состояния меняет подписи и кнопки, но не двигает верстку.
+
+  В узком окне первой уступает полоса, затем подпись этапа: проценты, время и
+  кнопка нужны всегда, а полоса и слова повторяют то же самое.
 */
 GlassPanel {
     id: panel
@@ -28,25 +30,20 @@ GlassPanel {
     signal cancelRequested()
     signal openRequested()
 
-    implicitHeight: Theme.panelPadding * 2 + 18 + Theme.space3 + Theme.buttonHeight
-    radius: 0
-    elevated: false
-    borderColor: "transparent"
-    edgeColor: "transparent"
+    implicitHeight: Theme.pillHeight
+    radius: Theme.pillRadius
 
     Item {
         anchors.fill: parent
-        anchors.leftMargin: Theme.contentMargin
-        anchors.rightMargin: Theme.contentMargin
-        anchors.topMargin: Theme.panelPadding
-        anchors.bottomMargin: Theme.panelPadding
+        anchors.leftMargin: Theme.pillPadding
+        anchors.rightMargin: Theme.pillPadding
 
         Text {
             id: stage
-            anchors.top: parent.top
+            anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left
-            anchors.right: numbers.left
-            anchors.rightMargin: Theme.space4
+            anchors.right: bar.left
+            anchors.rightMargin: Theme.space3
             text: panel.stageText
             elide: Text.ElideRight
             color: Theme.toneColor(panel.stageTone)
@@ -57,11 +54,35 @@ GlassPanel {
             Behavior on color { ColorAnimation { duration: Theme.base } }
         }
 
+        // Пустая полоса до запуска не занимает места: пока считать нечего,
+        // подпись этапа забирает всю строку.
+        ProgressBar {
+            id: bar
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: numbers.left
+            anchors.rightMargin: width > 0 ? Theme.space4 : 0
+
+            // Подписи слева важнее полосы, поэтому им остается не меньше
+            // половины ее полной ширины, а сама полоса ужимается.
+            readonly property real room: parent.width - actions.width - numbers.width
+                                         - Theme.progressWidth / 2 - Theme.space4 * 3
+            width: panel.busy || panel.value > 0
+                   ? Math.max(0, Math.min(Theme.progressWidth, room))
+                   : 0
+            opacity: width > 0 ? 1 : 0
+            value: panel.value
+            indeterminate: panel.indeterminate
+            tone: panel.tone
+
+            Behavior on width { NumberAnimation { duration: Theme.base; easing.type: Theme.easing } }
+            Behavior on opacity { NumberAnimation { duration: Theme.base } }
+        }
+
         Row {
             id: numbers
-            anchors.top: parent.top
-            anchors.right: parent.right
-            height: stage.height
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.right: actions.left
+            anchors.rightMargin: width > 0 ? Theme.space4 : 0
             spacing: Theme.space2
 
             // Проценты и время набраны моноширинным: в пропорциональном
@@ -82,6 +103,7 @@ GlassPanel {
                 color: Theme.faint
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontSmall
+                visible: text !== ""
             }
 
             Text {
@@ -95,17 +117,19 @@ GlassPanel {
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
+                // Оставшееся время — первая подпись, которой жертвует узкое
+                // окно: она самая длинная и самая приблизительная.
                 text: panel.etaText
                 color: Theme.faint
                 font.family: Theme.uiFamily
                 font.pixelSize: Theme.fontSmall
-                visible: text !== ""
+                visible: text !== "" && panel.width > Theme.windowWidth / 2
             }
         }
 
         Row {
             id: actions
-            anchors.bottom: parent.bottom
+            anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
             spacing: Theme.space2
 
@@ -134,22 +158,6 @@ GlassPanel {
                 enabled: !panel.cancelling
                 onClicked: panel.cancelRequested()
             }
-        }
-
-        // Пустая полоса до запуска — просто серая плашка. Она появляется,
-        // когда есть что показывать, но место под нее занято всегда, иначе
-        // кнопки прыгали бы при старте.
-        ProgressBar {
-            opacity: panel.busy || panel.value > 0 ? 1 : 0
-            Behavior on opacity { NumberAnimation { duration: Theme.base } }
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: (Theme.buttonHeight - Theme.progressHeight) / 2
-            anchors.left: parent.left
-            anchors.right: actions.left
-            anchors.rightMargin: Theme.space4
-            value: panel.value
-            indeterminate: panel.indeterminate
-            tone: panel.tone
         }
     }
 }

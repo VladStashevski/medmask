@@ -73,14 +73,10 @@ Item {
         anchors.fill: parent
         visible: false
 
-        // Полоса заходит под пилюли до их средней линии, а не кончается на
-        // кромке: у капсулы концы скругленные, и у самой кромки она уже
-        // полосы — на этой разнице строка и обрывалась по прямой.
         Rectangle {
-            y: list.headerHeight / 2
+            y: list.headerHeight
             width: parent.width
-            height: Math.max(
-                0, parent.height - list.headerHeight / 2 - list.footerHeight / 2)
+            height: Math.max(0, parent.height - list.headerHeight - list.footerHeight)
             color: "#FFFFFF"
         }
 

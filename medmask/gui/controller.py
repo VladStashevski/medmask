@@ -357,10 +357,11 @@ class Controller(QObject):
             self._percent = progress.percent
             self._progress = progress.percent / 100
             self._indeterminate = False
-        self._set_stage(
-            f"{progress.stage}  ·  готово {progress.completed} из {progress.total}",
-            "muted",
-        )
+        # Название этапа сюда не идет: «Извлечение и обезличивание» меняется
+        # на каждом файле и мельтешит, а что именно происходит со строкой —
+        # написано в самой строке списка. Панели остается счет: проценты не
+        # говорят, о скольких документах речь.
+        self._set_stage(f"готово {progress.completed} из {progress.total}", "muted")
         self._refresh_time()
 
     @Slot(object)
@@ -425,21 +426,17 @@ class Controller(QObject):
     def _summary(self, result) -> str:
         successful = result.successful
         parts = [f"{successful} {plural(successful, 'файл', 'файла', 'файлов')}"]
-        # Сначала то, что требует человека, потом справочное: строка узкая и
-        # обрезается с конца, а «проверить 1» пропустить нельзя — в отличие
-        # от числа распознанных сканов и длительности.
+        # В строку идет только то, после чего человек что-то делает: файлы,
+        # которые надо просмотреть, и файлы, которые не вышли. Сколько сканов
+        # прошло через OCR и сколько файлов чужого формата пропущено — это
+        # внутренняя статистика, она лежит в отчете рядом с результатом.
         if result.needs_review:
             parts.append(f"проверить {len(result.needs_review)}")
         if result.failed:
             parts.append(f"с ошибкой {result.failed}")
-        if result.recognized_with_ocr:
-            parts.append(f"OCR {result.recognized_with_ocr}")
-        skipped = sum(result.skipped_by_extension.values())
-        if skipped:
-            parts.append(f"пропущено {skipped}")
-        # Длительность стоит здесь, а не отдельной подписью: рядом с двумя
-        # кнопками на нее не остается места, а имя созданной папки из итога
-        # убрано — до нее ведет кнопка «Открыть результат».
+        # Длительность стоит здесь, а не отдельной подписью: рядом с кнопкой
+        # на нее не остается места. Имя созданной папки из итога тоже убрано —
+        # до нее ведет кнопка «Открыть результат».
         if self._elapsed >= 1:
             parts.append(f"за {format_duration(self._elapsed)}")
         head = "Готово" if successful else "Ничего не создано"

@@ -11,7 +11,7 @@ import tkinter as tk
 
 import pytest
 
-from medmask import ui
+from medmask import theme, ui
 from medmask.app import MedMaskApp
 
 
@@ -102,29 +102,47 @@ def test_tick_coalesces_worker_progress_and_preserves_terminal_event() -> None:
         def update(delta: float) -> bool:
             return False
 
+    class StubFileList:
+        @staticmethod
+        def update(delta: float) -> bool:
+            return False
+
     class StubRoot:
         def after(self, delay, callback) -> None:
             self.delay = delay
 
+    class Event:
+        """Прогресс без номера документа: строку списка он не трогает."""
+
+        number = 0
+
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def __repr__(self) -> str:
+            return self.label
+
     app = MedMaskApp.__new__(MedMaskApp)
     app.events = queue.Queue()
-    app.events.put(("progress", "первый"))
-    app.events.put(("progress", "последний"))
+    app.events.put(("progress", Event("первый")))
+    app.events.put(("progress", Event("последний")))
     app.animator = StubAnimator()
     app.progress = StubProgressBar()
+    app.files = StubFileList()
     app.root = StubRoot()
     app.processing = False
     seen = []
+    app._apply_row = lambda progress: None
     app._show_progress = lambda payload: seen.append(("progress", payload))
     app._show_scan = lambda payload: seen.append(("scan", payload))
     app._show_done = lambda payload: seen.append(("done", payload))
     app._show_error = lambda payload: seen.append(("error", payload))
 
     app._tick()
-    assert seen == [("progress", "последний")]
+    assert [(kind, str(payload)) for kind, payload in seen] == [("progress", "последний")]
 
     seen.clear()
-    app.events.put(("progress", "устаревший"))
+    app.events.put(("progress", Event("устаревший")))
     app.events.put(("done", "результат"))
     app._tick()
     assert seen == [("done", "результат")]
@@ -216,29 +234,35 @@ def test_button_can_change_label_and_style(root) -> None:
 # ---------- верстка ----------
 
 @pytest.mark.parametrize("scaling", [1.0, 1.5, 2.0])
-def test_layout_fits_the_card_at_any_display_scale(root, scaling: float) -> None:
+def test_layout_keeps_card_and_panel_inside_the_window(root, scaling: float) -> None:
     root.tk.call("tk", "scaling", scaling)
     app = MedMaskApp(root)
     root.update_idletasks()
     app._layout()
 
-    pad = app.px(32)
+    pad = app.px(theme.SPACE_5)
+    width = max(app.canvas.winfo_width(), app.px(theme.MIN_WIDTH))
     card_left, card_top, card_right, card_bottom = app.card.box
-    buttons = (app.choose_button, app.run_button, app.open_button)
-    row_right = buttons[-1]._origin[0] + buttons[-1].width
-
-    assert card_left == pad
-    assert row_right <= card_right - app.px(8)
-    assert app.progress._geometry[0] + app.progress._geometry[2] <= card_right
+    assert card_left >= pad
+    # лист центрирован и не шире предела: на широком окне он не растягивается
+    assert card_left == pytest.approx(width - card_right, abs=1)
+    assert card_right - card_left <= app.px(theme.MAX_CONTENT_WIDTH)
     assert card_bottom > card_top
 
+    # панель действий стоит под листом, а ее правый край совпадает с краем листа
+    assert app.run_button._origin[1] >= card_bottom
+    assert app.run_button._origin[0] + app.run_button.width <= card_right + 1
+    assert app.choose_button._origin[0] >= card_left
 
-def test_window_height_matches_the_content(root) -> None:
-    app = MedMaskApp(root)
+    # область списка остается положительной при любом масштабе
+    _x, _y, list_width, list_height = app.files.area
+    assert list_width > 0 and list_height > 0
+
+
+def test_window_can_be_resized(root) -> None:
+    MedMaskApp(root)
     root.update_idletasks()
-    height = app._layout()
-    assert height == int(app.card.box[3] + app.px(32))
-    assert root.resizable() == (True, False)
+    assert root.resizable() == (True, True)
 
 
 def test_version_is_shown(root) -> None:
@@ -246,3 +270,116 @@ def test_version_is_shown(root) -> None:
 
     app = MedMaskApp(root)
     assert app.version.text == __version__
+
+
+# ---------- список документов ----------
+
+def test_progress_stays_hidden_until_work_starts(root) -> None:
+    """Пустая полоса в покое читается как несделанная работа, поэтому ее нет."""
+    app = MedMaskApp(root)
+    root.update_idletasks()
+    assert app.progress.visible is False
+
+    app._set_footer(True)
+    assert app.progress.visible is True
+
+
+def test_big_folder_does_not_create_a_row_per_file(root) -> None:
+    app = MedMaskApp(root)
+    root.update_idletasks()
+    app.files.set_files([f"документ_{number}.pdf" for number in range(500)])
+    app._layout()
+
+    assert len(app.files.entries) == 500
+    # строк на холсте столько, сколько видно, плюс запас на прокрутку
+    assert len(app.files.rows) <= int(app.files.area[3] // app.files.row_height) + 3
+
+
+def test_row_mark_follows_the_outcome(root) -> None:
+    app = MedMaskApp(root)
+    root.update_idletasks()
+    app.files.set_files(["первый.pdf", "второй.pdf", "третий.pdf"])
+    app._layout()
+
+    app.files.update_file(1, outcome="done")
+    app.files.update_file(2, outcome="review", badge="проверить")
+    app.files.update_file(3, stage="страница 1 из 3")
+
+    assert app.files.mark(app.files.entries[0]) == ("check", theme.SUCCESS)
+    assert app.files.mark(app.files.entries[1]) == ("alert", theme.WARNING)
+    assert app.files.entries[2].active is True
+    assert app.files.entries[2].stage == "страница 1 из 3"
+
+
+def test_scrolling_stops_at_the_edges(root) -> None:
+    app = MedMaskApp(root)
+    root.update_idletasks()
+    app.files.set_files([f"документ_{number}.pdf" for number in range(200)])
+    app._layout()
+
+    app.files.scroll_by(-500)
+    assert app.files.target_offset == 0
+
+    app.files.scroll_by(10 ** 6)
+    limit = app.files.content_height - app.files.area[3]
+    assert app.files.target_offset == pytest.approx(limit)
+
+
+def test_truncate_end_keeps_the_beginning(root) -> None:
+    import tkinter.font as tkfont
+
+    font = tkfont.Font(root=root, family="Helvetica", size=12)
+    name = "Выписной_эпикриз_кардиология_2026.pdf"
+    result = ui.truncate_end(name, font, 90)
+    assert result.endswith("…")
+    assert name.startswith(result[:-1])
+    assert font.measure(result) <= 90
+
+
+# ---------- шапка окна ----------
+
+def test_titlebar_leaves_room_for_the_card(root) -> None:
+    """Лист не должен налезать на полосу заголовка, которую рисуем сами."""
+    app = MedMaskApp(root)
+    root.update_idletasks()
+    app._layout()
+
+    card_top = app.card.box[1]
+    if app.seamless:
+        assert card_top >= app.px(theme.TITLEBAR_HEIGHT)
+    assert app.brand.text == "MedMask"
+
+
+def test_version_moved_to_the_bottom(root) -> None:
+    app = MedMaskApp(root)
+    root.update_idletasks()
+    app._layout()
+
+    version_y = app.canvas.coords(app.version.item)[1]
+    assert version_y > app.card.box[3]
+
+
+# ---------- сглаженные скругления ----------
+
+def test_corner_image_is_cached_and_sized(root) -> None:
+    canvas = tk.Canvas(root, bg="#ffffff")
+    first = ui.corner_image(canvas, 8, "#2563eb", "", "#ffffff", 0.0, "nw")
+    again = ui.corner_image(canvas, 8, "#2563eb", "", "#ffffff", 0.0, "nw")
+
+    assert first.width() == first.height() == 8
+    # тот же угол не пересчитывается заново
+    assert first is again
+
+
+def test_corner_blends_the_shape_with_its_background(root) -> None:
+    """Внешний угол картинки — фон, внутренний — заливка, между ними переход."""
+    canvas = tk.Canvas(root, bg="#ffffff")
+    image = ui.corner_image(canvas, 10, "#000000", "", "#ffffff", 0.0, "nw")
+
+    assert image.get(0, 0)[:3] == (255, 255, 255)
+    assert image.get(9, 9)[:3] == (0, 0, 0)
+
+    # вдоль дуги обязаны быть полутона, иначе край снова лесенка
+    shades = {image.get(x, y)[:3] for y in range(10) for x in range(10)}
+    middle = [tone for tone in shades if tone not in {(255, 255, 255), (0, 0, 0)}]
+    assert middle, "край угла не сглажен"

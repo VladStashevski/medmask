@@ -39,6 +39,12 @@ class Progress:
     # В параллельном режиме несколько файлов движутся одновременно, поэтому
     # completed + file_fraction уже не описывает общий прогресс.
     overall_fraction: float | None = None
+    # Номер документа в списке (1-based) и его исход. Окно держит строку на
+    # каждый файл и обновляет ее по номеру: при параллельной обработке имена
+    # приходят вперемешку, а номер остается единственным надежным ключом.
+    number: int = 0
+    outcome: str = ""
+    badge: str = ""
 
     @property
     def percent(self) -> int:
@@ -78,6 +84,30 @@ class FileResult:
             or self.findings
             or self.error
         )
+
+
+def outcome_of(result: "FileResult") -> str:
+    """Как строка документа выглядит в списке: ошибка, требует взгляда, готово.
+
+    Отличается от BatchResult.needs_review намеренно: там распознанный скан
+    сам по себе повод перечитать результат, а в списке OCR — это пометка на
+    строке, а не желтый статус на весь документ.
+    """
+    if result.error is not None:
+        return "failed"
+    if result.low_confidence_pages or result.findings or result.scan_pages:
+        return "review"
+    return "done"
+
+
+def badge_of(result: "FileResult") -> str:
+    """Короткая пометка справа в строке."""
+    marks: list[str] = []
+    if result.ocr_pages:
+        marks.append("OCR")
+    if result.low_confidence_pages or result.findings:
+        marks.append("проверить")
+    return "  ·  ".join(marks)
 
 
 @dataclass
@@ -373,7 +403,14 @@ def _process_files_parallel(
     executors: list[concurrent.futures.ProcessPoolExecutor] = []
     total = len(files)
 
-    def emit(number: int, stage: str, fraction: float, detail: str = "") -> None:
+    def emit(
+        number: int,
+        stage: str,
+        fraction: float,
+        detail: str = "",
+        outcome: str = "",
+        badge: str = "",
+    ) -> None:
         fractions[number] = max(fractions[number], min(1.0, max(0.0, fraction)))
         if on_progress is None:
             return
@@ -387,6 +424,9 @@ def _process_files_parallel(
                 detail=detail,
                 file_fraction=fractions[number],
                 overall_fraction=overall,
+                number=number,
+                outcome=outcome,
+                badge=badge,
             )
         )
 
@@ -453,6 +493,8 @@ def _process_files_parallel(
                     number,
                     "Документ готов" if result.error is None else "Ошибка документа",
                     1.0,
+                    outcome=outcome_of(result),
+                    badge=badge_of(result),
                 )
         drain_progress()
     except BaseException:
@@ -615,7 +657,15 @@ def process_folder(
         else:
             results = []
             for number, path in enumerate(files, start=1):
-                def report_stage(stage: str, fraction: float, detail: str) -> None:
+                def report_stage(
+                    stage: str,
+                    fraction: float,
+                    detail: str,
+                    outcome: str = "",
+                    badge: str = "",
+                    number: int = number,
+                    path: Path = path,
+                ) -> None:
                     if on_progress:
                         on_progress(
                             Progress(
@@ -625,17 +675,26 @@ def process_folder(
                                 stage=stage,
                                 detail=detail,
                                 file_fraction=fraction,
+                                number=number,
+                                outcome=outcome,
+                                badge=badge,
                             )
                         )
 
-                results.append(
-                    _process_file(
-                        path,
-                        number,
-                        output_dir,
-                        on_stage=report_stage,
-                        is_cancelled=is_cancelled,
-                    )
+                file_result = _process_file(
+                    path,
+                    number,
+                    output_dir,
+                    on_stage=report_stage,
+                    is_cancelled=is_cancelled,
+                )
+                results.append(file_result)
+                report_stage(
+                    "Документ готов" if file_result.error is None else "Ошибка документа",
+                    1.0,
+                    "",
+                    outcome_of(file_result),
+                    badge_of(file_result),
                 )
         if is_cancelled is not None and is_cancelled():
             raise BatchCancelled("Обработка отменена.")

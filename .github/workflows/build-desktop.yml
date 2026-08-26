@@ -12,7 +12,8 @@ permissions:
 jobs:
   build:
     name: ${{ matrix.name }}
-    timeout-minutes: 45
+    # Qt заметно прибавил времени установке и упаковке.
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:

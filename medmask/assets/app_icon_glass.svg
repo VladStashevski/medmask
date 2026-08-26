@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">MedMask glass icon</title>
+  <desc id="desc">A frosted glass shield with a medical cross and a masking bar on a blue background.</desc>
+
+  <defs>
+    <linearGradient id="background" x1="96" y1="32" x2="912" y2="992" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#43A6FF"/>
+      <stop offset="0.38" stop-color="#1478F2"/>
+      <stop offset="0.72" stop-color="#1550D7"/>
+      <stop offset="1" stop-color="#182B91"/>
+    </linearGradient>
+
+    <radialGradient id="topGlow" cx="0" cy="0" r="1" gradientTransform="translate(296 202) rotate(42) scale(630)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C8F3FF" stop-opacity="0.92"/>
+      <stop offset="0.34" stop-color="#8AD8FF" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#5CBFFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="bottomGlow" cx="0" cy="0" r="1" gradientTransform="translate(752 812) rotate(-126) scale(530)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#43E3FF" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#43E3FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="glassFill" x1="238" y1="198" x2="816" y2="878" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.47"/>
+      <stop offset="0.36" stop-color="#E8F7FF" stop-opacity="0.25"/>
+      <stop offset="0.7" stop-color="#B9DFFF" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.32"/>
+    </linearGradient>
+
+    <linearGradient id="glassEdge" x1="244" y1="172" x2="822" y2="884" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.98"/>
+      <stop offset="0.4" stop-color="#DDF5FF" stop-opacity="0.78"/>
+      <stop offset="0.72" stop-color="#A8D6FF" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.94"/>
+    </linearGradient>
+
+    <linearGradient id="markFill" x1="344" y1="330" x2="688" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.56" stop-color="#F4FBFF"/>
+      <stop offset="1" stop-color="#D7ECFF"/>
+    </linearGradient>
+
+    <linearGradient id="refraction" x1="204" y1="250" x2="860" y2="730" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.42"/>
+      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.02"/>
+      <stop offset="1" stop-color="#6BCBFF" stop-opacity="0.24"/>
+    </linearGradient>
+
+    <filter id="ambientBlur" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="42"/>
+    </filter>
+
+    <filter id="shieldShadow" x="-30%" y="-25%" width="160%" height="165%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#061C66" flood-opacity="0.36"/>
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#FFFFFF" flood-opacity="0.28"/>
+    </filter>
+
+    <filter id="markShadow" x="-30%" y="-30%" width="160%" height="170%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#07368F" flood-opacity="0.3"/>
+      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#FFFFFF" flood-opacity="0.72"/>
+    </filter>
+
+    <clipPath id="shieldClip">
+      <path d="M512 136C629 236 751 286 856 304V494C856 677 744 824 512 902C280 824 168 677 168 494V304C273 286 395 236 512 136Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Full-bleed base so the platform can apply its own icon mask. -->
+  <rect width="1024" height="1024" fill="url(#background)"/>
+  <rect width="1024" height="1024" fill="url(#topGlow)"/>
+  <rect width="1024" height="1024" fill="url(#bottomGlow)"/>
+
+  <!-- Soft color bodies remain visible through the glass shield. -->
+  <ellipse cx="190" cy="350" rx="286" ry="184" transform="rotate(-28 190 350)" fill="#B8F1FF" fill-opacity="0.2" filter="url(#ambientBlur)"/>
+  <ellipse cx="792" cy="720" rx="300" ry="202" transform="rotate(-32 792 720)" fill="#30C9FF" fill-opacity="0.18" filter="url(#ambientBlur)"/>
+  <path d="M-50 778C190 588 338 604 514 696C694 790 820 774 1082 530V1070H-50Z" fill="#101F7E" fill-opacity="0.17"/>
+
+  <g filter="url(#shieldShadow)">
+    <!-- Wide translucent edge creates the frosted rim. -->
+    <path d="M512 136C629 236 751 286 856 304V494C856 677 744 824 512 902C280 824 168 677 168 494V304C273 286 395 236 512 136Z"
+          fill="url(#glassFill)" stroke="#FFFFFF" stroke-opacity="0.24" stroke-width="58" stroke-linejoin="round"/>
+
+    <!-- Crisp inner edge keeps the silhouette readable at small sizes. -->
+    <path d="M512 136C629 236 751 286 856 304V494C856 677 744 824 512 902C280 824 168 677 168 494V304C273 286 395 236 512 136Z"
+          fill="none" stroke="url(#glassEdge)" stroke-width="25" stroke-linejoin="round"/>
+
+    <!-- Diagonal refraction and a restrained specular highlight. -->
+    <path d="M214 286L604 146L866 376L430 620Z" fill="url(#refraction)" clip-path="url(#shieldClip)"/>
+    <path d="M262 315C354 292 438 251 512 190C588 252 663 288 741 312"
+          fill="none" stroke="#FFFFFF" stroke-opacity="0.72" stroke-width="13" stroke-linecap="round"/>
+  </g>
+
+  <!-- Medical mark and irreversible masking bar. -->
+  <g fill="url(#markFill)" filter="url(#markShadow)">
+    <rect x="442" y="326" width="140" height="336" rx="42"/>
+    <rect x="344" y="424" width="336" height="140" rx="42"/>
+    <rect x="304" y="690" width="416" height="112" rx="56"/>
+  </g>
+
+  <!-- Tiny top-edge gleams add glass depth without weakening the glyph. -->
+  <path d="M475 343H549" stroke="#FFFFFF" stroke-opacity="0.76" stroke-width="7" stroke-linecap="round"/>
+  <path d="M335 708H689" stroke="#FFFFFF" stroke-opacity="0.68" stroke-width="6" stroke-linecap="round"/>
+</svg>

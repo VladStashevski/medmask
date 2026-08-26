@@ -35,7 +35,7 @@ def run() -> int:
         _report(result.output_dir)
         return 0
 
-    from medmask.app import main
+    from medmask.launcher import main
 
     main()
     return 0

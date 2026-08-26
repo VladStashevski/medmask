@@ -13,6 +13,7 @@ dependencies = [
   "docx2txt>=0.9,<1",
   "openpyxl>=3.1,<4",
   "onnxruntime>=1.28,<2",
+  "PySide6>=6.8,<7",
   "PyMuPDF>=1.25,<2",
   "rapidocr==3.9.2",
   "striprtf>=0.0.29,<1",
@@ -26,13 +27,20 @@ build = [
 ]
 
 [project.scripts]
-medmask = "medmask.app:main"
+medmask = "medmask.launcher:main"
 
 [tool.setuptools]
-packages = ["medmask"]
+packages = ["medmask", "medmask.gui"]
 
 [tool.setuptools.dynamic]
 version = { attr = "medmask.__version__" }
 
 [tool.setuptools.package-data]
-medmask = ["assets/*.onnx", "assets/*.ttf", "assets/app_icon.png"]
+medmask = [
+  "assets/*.onnx",
+  "assets/*.ttf",
+  "assets/app_icon.png",
+  "gui/qml/*.qml",
+  "gui/qml/MedMask/*.qml",
+  "gui/qml/MedMask/qmldir",
+]

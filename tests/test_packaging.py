@@ -52,6 +52,49 @@ def test_application_icons_are_present_and_wired_into_the_build() -> None:
     assert 'assets/app_icon.png' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
+def test_interface_files_are_bundled() -> None:
+    """QML читается с диска, поэтому обязан попасть и в пакет, и в сборку."""
+    qml = ROOT / "medmask" / "gui" / "qml"
+    assert (qml / "Main.qml").is_file()
+    assert (qml / "MedMask" / "qmldir").is_file()
+    assert (qml / "MedMask" / "Theme.qml").is_file()
+
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    for pattern in ("gui/qml/*.qml", "gui/qml/MedMask/*.qml", "gui/qml/MedMask/qmldir"):
+        assert pattern in pyproject
+    assert '"medmask.gui"' in pyproject
+
+    spec = (ROOT / "MedMask.spec").read_text(encoding="utf-8")
+    assert "gui/qml/MedMask/*.qml" in spec
+    assert "PySide6.QtQuick" in spec
+
+
+def test_qt_is_declared_and_pinned() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "PySide6" in pyproject
+    constraints = (ROOT / "constraints.txt").read_text(encoding="utf-8")
+    for package in ("PySide6==", "PySide6_Addons==", "PySide6_Essentials==", "shiboken6=="):
+        assert package in constraints
+
+
+def test_launch_command_survives_the_new_window() -> None:
+    """Команда medmask и пакетный режим не зависят от выбора интерфейса."""
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'medmask = "medmask.launcher:main"' in pyproject
+    entry = (ROOT / "main.py").read_text(encoding="utf-8")
+    assert "from medmask.launcher import main" in entry
+    assert '"--batch"' in entry
+    launcher = (ROOT / "medmask" / "launcher.py").read_text(encoding="utf-8")
+    assert "MEDMASK_UI" in launcher
+
+
+def test_unused_qt_modules_stay_out_of_the_build() -> None:
+    """Без списка исключений в сборку уезжает браузерный движок Qt."""
+    spec = (ROOT / "MedMask.spec").read_text(encoding="utf-8")
+    for module in ("QtWebEngineCore", "QtMultimedia", "Qt3DRender", "QtQuick3D"):
+        assert module in spec
+
+
 @pytest.mark.parametrize(
     "path",
     ["scripts/build_macos.command", "scripts/build_windows.ps1", "MedMask.spec"],

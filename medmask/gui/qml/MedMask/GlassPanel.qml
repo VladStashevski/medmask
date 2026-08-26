@@ -25,6 +25,13 @@ Item {
     property color borderColor: Theme.panelBorder
     property bool elevated: true
     property real blurAmount: 1.0
+    // Насколько мягко пилюля вступает на строку. Разом она этого делать не
+    // должна: строка на кромке получала бы ступеньку — сверху четко и темно,
+    // снизу размыто и бледно, и ступенька читается как рез.
+    property real edgeSoftness: 14
+
+    readonly property real softStop: Math.min(0.45, edgeSoftness / Math.max(1, height))
+    readonly property color clearFill: Qt.rgba(fillColor.r, fillColor.g, fillColor.b, 0)
 
     default property alias content: holder.data
 
@@ -59,14 +66,21 @@ Item {
             id: maskShape
             anchors.fill: parent
             visible: false
+            // Порог маски срезает полутона ниже половины, поэтому «пусто»
+            // в ней записывается половиной: с нее размытие и нарастает.
             Rectangle {
                 anchors.fill: parent
-                color: "white"
                 antialiasing: true
                 topLeftRadius: panel.topRadius
                 topRightRadius: panel.topRadius
                 bottomLeftRadius: panel.bottomRadius
                 bottomRightRadius: panel.bottomRadius
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: Qt.rgba(1, 1, 1, 0.5) }
+                    GradientStop { position: panel.softStop; color: "#FFFFFF" }
+                    GradientStop { position: 1 - panel.softStop; color: "#FFFFFF" }
+                    GradientStop { position: 1.0; color: Qt.rgba(1, 1, 1, 0.5) }
+                }
             }
         }
 
@@ -90,20 +104,25 @@ Item {
             // размытие выбеливало ее до фона — на кромке текст обрывался.
             // Замер по темной точке текста: при 40 она белеет до 184, при 8
             // остается около 100, то есть строка под стеклом еще читается.
-            blurMax: 8
-            blurMultiplier: 0.18
+            blurMax: 14
+            blurMultiplier: 0.3
             maskEnabled: true
             maskSource: maskTexture
             // Порог именно 0.5: при нуле MultiEffect не отсекает ничего, и
             // размытие ложится прямоугольником — его углы торчат за капсулу.
             maskThresholdMin: 0.5
-            maskSpreadAtMin: 0.15
+            maskSpreadAtMin: 0.5
         }
 
         Rectangle {
             anchors.fill: parent
             antialiasing: true
-            color: panel.fillColor
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: panel.clearFill }
+                GradientStop { position: panel.softStop; color: panel.fillColor }
+                GradientStop { position: 1 - panel.softStop; color: panel.fillColor }
+                GradientStop { position: 1.0; color: panel.clearFill }
+            }
             border.width: Theme.hairline
             border.color: panel.borderColor
             topLeftRadius: panel.topRadius
@@ -111,7 +130,6 @@ Item {
             bottomLeftRadius: panel.bottomRadius
             bottomRightRadius: panel.bottomRadius
 
-            Behavior on color { ColorAnimation { duration: Theme.base } }
         }
 
         // Внутренний блик: без него стекло выглядит просто мутным пятном.

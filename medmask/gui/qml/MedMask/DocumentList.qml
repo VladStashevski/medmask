@@ -6,13 +6,14 @@ import MedMask
   Список документов. Держит на экране только видимые строки, поэтому папка на
   тысячу файлов открывается так же быстро, как папка на десять.
 
-  Строка уходит под пилюлю и видна под ней до самого дальнего ее края, но
-  ровно по ее силуэту: обрезанная по прямой строка выглядывала бы из-за
-  скругленных концов капсулы полоской и углом — и слева, и справа.
+  Строка заезжает под пилюлю, видна сквозь стекло во всю его длину и
+  пропадает разом на дальней кромке — по ее же дуге. Обрезающая капсула идет
+  от верхней пилюли до нижней одной фигурой и отступает от краев окна ровно
+  как плашка строки: границы совпадают, и обрыва по бокам не видно.
 
-  headerHeight и footerHeight — сколько сверху и снизу закрыто пилюлей: на
-  столько отступают поля прокрутки, поэтому первая строка стоит под верхней
-  пилюлей, а последняя доезжает до нижней и скрывается.
+  headerHeight и footerHeight — сколько сверху и снизу занято пилюлей вместе
+  с ее отступом: на столько отступают поля прокрутки, поэтому первая строка
+  встает под верхней пилюлей, а последняя доезжает до нижней.
 */
 Item {
     id: list
@@ -21,7 +22,7 @@ Item {
     property real headerHeight: 0
     property real footerHeight: 0
 
-    // Обрезка сделана маской слоя, а не накладкой: окно прозрачное, и
+    // Затухание сделано маской слоя, а не накладкой: окно прозрачное, и
     // накладка любого цвета легла бы на обои мутным пятном.
     Item {
         id: viewport
@@ -32,6 +33,7 @@ Item {
             maskSource: fadeMask
             // Порог именно 0.5: при нуле MultiEffect не отсекает ничего —
             // «ниже нуля» пикселей не бывает, и маска висит вхолостую.
+            // Спред оставлен на сглаживание дуги, не больше.
             maskThresholdMin: 0.5
             maskSpreadAtMin: 0.15
         }
@@ -41,8 +43,8 @@ Item {
             objectName: "documents"
             anchors.fill: parent
             clip: true
-            // Список не участвует в обходе по Tab: он не действие, а содержимое,
-            // и без видимой рамки фокус на нем выглядел бы потерянным.
+            // Список не участвует в обходе по Tab: он не действие, а
+            // содержимое, и без рамки фокус на нем выглядел бы потерянным.
             activeFocusOnTab: false
             boundsBehavior: Flickable.StopAtBounds
             maximumFlickVelocity: 2200
@@ -51,13 +53,17 @@ Item {
             bottomMargin: list.footerHeight + Theme.space2
 
             delegate: FileRow {
+                id: rowItem
                 width: view.width
                 name: model.name
                 kind: model.kind
                 status: model.status
                 statusText: model.statusText
                 badge: model.badge
-                hovered: pointer.hovered
+                // Под пилюлей строка не подсвечивается. Курсор стоит на
+                // стекле, а не на строке, и плашка, обрезанная затуханием,
+                // читалась бы как линия поперек списка.
+                hovered: pointer.hovered && list.inTheOpen(y - view.contentY, height)
 
                 HoverHandler { id: pointer }
 
@@ -66,34 +72,27 @@ Item {
         }
     }
 
-    // Сама маска — полоса между пилюлями плюс силуэты обеих пилюль: строка
-    // видна на просвет ровно там, где ее прикрывает капсула, и нигде больше.
+    // Строка стоит целиком в открытой части списка, а не под пилюлей.
+    function inTheOpen(top, rowHeight) {
+        return top >= headerHeight && top + rowHeight <= height - footerHeight;
+    }
+
+    // Маска — одна капсула от верхней кромки верхней пилюли до нижней кромки
+    // нижней: строка видна под стеклом во всю его длину и пропадает разом на
+    // дальнем крае, ровно по его дуге.
+    //
+    // По бокам маска отступает на столько же, на сколько плашка строки: обе
+    // капсулы стоят на одной вертикали, и обрезать там нечего — вырезанной
+    // выглядела бы любая другая ширина.
     Item {
         id: fadeShape
         anchors.fill: parent
         visible: false
 
         Rectangle {
-            y: list.headerHeight
-            width: parent.width
-            height: Math.max(0, parent.height - list.headerHeight - list.footerHeight)
-            color: "#FFFFFF"
-        }
-
-        Rectangle {
             x: Theme.pillMargin
             width: Math.max(0, parent.width - Theme.pillMargin * 2)
-            height: list.headerHeight
-            radius: Theme.pillRadius
-            antialiasing: true
-            color: "#FFFFFF"
-        }
-
-        Rectangle {
-            x: Theme.pillMargin
-            y: parent.height - list.footerHeight
-            width: Math.max(0, parent.width - Theme.pillMargin * 2)
-            height: list.footerHeight
+            height: Math.max(0, parent.height - Theme.pillMargin)
             radius: Theme.pillRadius
             antialiasing: true
             color: "#FFFFFF"

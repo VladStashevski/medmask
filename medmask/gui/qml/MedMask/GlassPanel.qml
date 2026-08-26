@@ -33,6 +33,13 @@ Item {
 
     readonly property real softStop: Math.min(0.45, edgeSoftness / Math.max(1, height))
 
+    // Радиус размытия и запас, с которым берется слепок под стеклом, ходят
+    // парой. Размытию нужны пиксели и за кромкой панели: слепок ровно по ее
+    // размеру их не содержит, и содержимое под стеклом обрывалось бледной
+    // каймой — внутри капсулы проступал прямоугольник с отступом от краев.
+    readonly property real blurRadius: 32
+    readonly property real bleed: blurRadius + Theme.space2
+
     default property alias content: holder.data
 
     readonly property bool frosted: Theme.glass && blurSource !== null
@@ -54,22 +61,32 @@ Item {
 
         ShaderEffectSource {
             id: slice
-            anchors.fill: parent
+            x: -panel.bleed
+            y: -panel.bleed
+            width: panel.width + panel.bleed * 2
+            height: panel.height + panel.bleed * 2
             visible: false
             live: panel.frosted
             hideSource: false
             sourceItem: panel.frosted ? panel.blurSource : null
-            sourceRect: Qt.rect(panel.x, panel.y, panel.width, panel.height)
+            sourceRect: Qt.rect(panel.x - panel.bleed, panel.y - panel.bleed,
+                                slice.width, slice.height)
         }
 
         Item {
             id: maskShape
-            anchors.fill: parent
+            x: slice.x
+            y: slice.y
+            width: slice.width
+            height: slice.height
             visible: false
             // Порог маски срезает полутона ниже половины, поэтому «пусто»
             // в ней записывается половиной: с нее размытие и нарастает.
+            // Запас по краям маска не пропускает вовсе: размытие берет
+            // сэмплы снаружи капсулы, а видно его ровно по ее силуэту.
             Rectangle {
                 anchors.fill: parent
+                anchors.margins: panel.bleed
                 antialiasing: true
                 topLeftRadius: panel.topRadius
                 topRightRadius: panel.topRadius
@@ -86,7 +103,10 @@ Item {
 
         ShaderEffectSource {
             id: maskTexture
-            anchors.fill: parent
+            x: slice.x
+            y: slice.y
+            width: slice.width
+            height: slice.height
             visible: false
             live: true
             hideSource: true
@@ -94,17 +114,18 @@ Item {
         }
 
         MultiEffect {
-            anchors.fill: parent
+            x: slice.x
+            y: slice.y
+            width: slice.width
+            height: slice.height
             visible: panel.frosted
             source: slice
             autoPaddingEnabled: false
             blurEnabled: true
             blur: panel.blurAmount
             // Стекло матовое: под пилюлей от строки остается цветное пятно,
-            // а не читаемый текст. Больше 32 брать нельзя — размытие тянет
-            // пиксели из-за края слепка, и на кромке капсулы проступает
-            // растянутая полоса.
-            blurMax: 32
+            // а не читаемый текст.
+            blurMax: panel.blurRadius
             blurMultiplier: 0.7
             // Настоящее матовое стекло не только размывает, но и слегка
             // поднимает цвет подложки: без этого слепок под белой заливкой

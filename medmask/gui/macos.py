@@ -27,9 +27,10 @@ NS_MATERIALS = {
     "content": 18,
     "under": 21,
 }
-# Материал по умолчанию: боковая панель Finder. Размытие заметное, но обои
-# сквозь него еще угадываются — «content» и «under» превращают их в пятно.
-DEFAULT_GLASS_MATERIAL = "sidebar"
+# Материал по умолчанию: самый легкий из системных. Окно остается прозрачным,
+# а рабочий стол за ним лишь слегка размывается — «sidebar» и то, что ниже
+# него в списке, превращают обои в ровное пятно.
+DEFAULT_GLASS_MATERIAL = "menu"
 NS_BLENDING_BEHIND_WINDOW = 0
 NS_EFFECT_STATE_ACTIVE = 1
 NS_VIEW_WIDTH_SIZABLE = 2

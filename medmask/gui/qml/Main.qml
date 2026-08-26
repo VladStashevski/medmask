@@ -50,11 +50,12 @@ Window {
 
         DocumentList {
             anchors.fill: parent
-            // Строки доезжают до дальнего края пилюли и растворяются под ней.
+            // Список доходит до самого низа окна: пилюля лежит на нем, а не
+            // отрезает его по себе — иначе вокруг капсулы остается пустая
+            // рамка в ширину отступа, и строка обрывается вне всякой пилюли.
             anchors.topMargin: Theme.titleBarHeight
-            anchors.bottomMargin: Theme.pillMargin
             headerHeight: Theme.pillHeight
-            footerHeight: Theme.pillHeight
+            footerHeight: Theme.pillHeight + Theme.pillMargin
             model: controller.documents
             opacity: controller.showList ? 1 : 0
             visible: opacity > 0

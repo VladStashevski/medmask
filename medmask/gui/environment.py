@@ -74,14 +74,15 @@ class Environment(QObject):
     def _get_glass_opacity(self) -> float:
         """Плотность белой пелены поверх системного стекла.
 
-        Ниже 0.6 сквозь окно проступают обои и мешают читать имена файлов,
-        выше 0.7 пелена съедает само размытие — окно становится просто белым.
+        Держится на грани: сквозь окно должно быть видно, что под ним, но
+        имена файлов читают с этой же поверхности. Выше 0.6 пелена съедает и
+        размытие, и сам факт прозрачности — окно становится просто белым.
         """
         raw = os.environ.get("MEDMASK_GLASS_OPACITY", "").strip()
         try:
             value = float(raw)
         except ValueError:
-            return 0.64
+            return 0.52
         return min(1.0, max(0.2, value))
 
     def _get_system_backdrop(self) -> bool:

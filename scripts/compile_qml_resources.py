@@ -34,7 +34,11 @@ def _rcc_executable() -> Path:
 def compile_resources(output: Path = DEFAULT_OUTPUT) -> Path:
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="medmask-qrc-") as temporary:
+    # Keep the temporary file on the output volume: os.replace() cannot move
+    # files between C: and D: on Windows GitHub runners.
+    with tempfile.TemporaryDirectory(
+        prefix=".medmask-qrc-", dir=output.parent
+    ) as temporary:
         generated = Path(temporary) / output.name
         subprocess.run(
             [

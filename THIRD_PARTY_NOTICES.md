@@ -13,6 +13,17 @@ Bundled model checksums:
 - `ch_ppocr_mobile_v2.0_cls_mobile.onnx`: `e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c`
 - `cyrillic_PP-OCRv5_rec_mobile.onnx`: `90f761b4bfcce0c8c561c0cb5c887b0971d3ec01c32164bdf7374a35b0982711`
 
+# PDF engine
+
+MedMask uses PyMuPDF, which Artifex offers under the GNU Affero General Public
+License v3.0 or a separate commercial license. This repository does not include
+an Artifex commercial license. Distributing a closed-source MedMask build
+therefore requires a separately obtained commercial license or full compliance
+with the AGPL, including its corresponding-source obligations.
+
+- PyMuPDF licensing: https://pymupdf.readthedocs.io/en/latest/about.html#license
+- GNU AGPL v3: https://www.gnu.org/licenses/agpl-3.0.html
+
 # Bundled font
 
 MedMask includes Liberation Sans 2.1.5 (`LiberationSans-Regular.ttf`) so that

@@ -5,10 +5,15 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import runpy
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 from PIL import Image
+from PySide6.QtCore import QResource
 
 from medmask import __version__
 from medmask import depersonalizer as engine
@@ -35,6 +40,14 @@ def test_font_license_is_documented() -> None:
     assert FONT_SHA256 in notices
 
 
+def test_pymupdf_dual_license_is_documented() -> None:
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    normalized = " ".join(notices.split())
+    assert "PyMuPDF" in notices
+    assert "GNU Affero General Public License" in normalized
+    assert "commercial license" in notices
+
+
 def test_package_data_includes_the_font() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert 'assets/*.ttf' in pyproject
@@ -47,14 +60,14 @@ def test_application_icons_are_present_and_wired_into_the_build() -> None:
         assert (assets / filename).is_file()
     with Image.open(assets / "app_icon.png") as icon:
         assert icon.size == (256, 256)
-    spec = (ROOT / "MedMask.spec").read_text(encoding="utf-8")
-    assert "app_icon.icns" in spec
-    assert "app_icon.ico" in spec
+    builder = (ROOT / "scripts" / "build_native.py").read_text(encoding="utf-8")
+    assert "app_icon.icns" in builder
+    assert "app_icon.ico" in builder
     assert 'assets/app_icon.png' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
-def test_interface_files_are_bundled() -> None:
-    """QML читается с диска, поэтому обязан попасть и в пакет, и в сборку."""
+def test_qml_resource_manifest_covers_the_whole_interface() -> None:
+    """Каждый QML входит в бинарный Qt-ресурс под стабильным qrc-путём."""
     qml = ROOT / "medmask" / "gui" / "qml"
     assert (qml / "Main.qml").is_file()
     assert (qml / "MedMask" / "qmldir").is_file()
@@ -65,9 +78,40 @@ def test_interface_files_are_bundled() -> None:
         assert pattern in pyproject
     assert '"medmask.gui"' in pyproject
 
-    spec = (ROOT / "MedMask.spec").read_text(encoding="utf-8")
-    assert "gui/qml/MedMask/*.qml" in spec
-    assert "PySide6.QtQuick" in spec
+    qrc = ROOT / "medmask" / "gui" / "qml.qrc"
+    aliases = {
+        element.attrib["alias"]
+        for element in ET.parse(qrc).getroot().iter("file")
+    }
+    expected = {
+        f"medmask/gui/qml/{path.relative_to(qml).as_posix()}"
+        for path in qml.rglob("*")
+        if path.is_file()
+    }
+    assert expected <= aliases
+    assert "medmask/assets/app_glyph.png" in aliases
+
+
+def test_qml_compiler_creates_compressed_registerable_resource(tmp_path: Path) -> None:
+    generated = tmp_path / "qml_resource.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "compile_qml_resources.py"),
+            "--output",
+            str(generated),
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+    source = generated.read_text(encoding="utf-8")
+    assert "Выберите папку" not in source
+    namespace = runpy.run_path(str(generated))
+    try:
+        assert QResource(":/medmask/gui/qml/Main.qml").isValid()
+    finally:
+        namespace["qCleanupResources"]()
 
 
 def test_qt_is_declared_and_pinned() -> None:
@@ -89,30 +133,91 @@ def test_launch_command_survives_the_new_window() -> None:
     assert "MEDMASK_UI" in launcher
 
 
-def test_unused_qt_modules_stay_out_of_the_build() -> None:
-    """Без списка исключений в сборку уезжает браузерный движок Qt."""
-    spec = (ROOT / "MedMask.spec").read_text(encoding="utf-8")
-    for module in ("QtWebEngineCore", "QtMultimedia", "Qt3DRender", "QtQuick3D"):
-        assert module in spec
+def test_native_build_does_not_request_unused_qt_modules() -> None:
+    """Сборщик просит только QML-плагины, не браузер, 3D и мультимедиа."""
+    builder = (ROOT / "scripts" / "build_native.py").read_text(encoding="utf-8")
+    assert '"--include-qt-plugins=qml"' in builder
+    for module in ("QtWebEngine", "QtMultimedia", "Qt3D", "QtQuick3D"):
+        assert module in builder
+    assert "--noinclude-data-files=" in builder
+    assert "--noinclude-dlls=" in builder
+    assert "QT_DROP" in builder
+    assert '"webengine"' in builder
+    assert '"qtpdf"' in builder
+
+
+def test_native_build_excludes_unused_gui_and_ocr_backends() -> None:
+    builder = (ROOT / "scripts" / "build_native.py").read_text(encoding="utf-8")
+    assert "--enable-plugin=tk-inter" not in builder
+    for module in (
+        "medmask.app",
+        "tkinter",
+        "rapidocr.inference_engine.pytorch",
+        "rapidocr.inference_engine.openvino",
+        "rapidocr.inference_engine.tensorrt",
+    ):
+        assert module in builder
+
+
+def test_windows_native_output_is_used_without_destructive_rename() -> None:
+    builder = (ROOT / "scripts" / "build_native.py").read_text(encoding="utf-8")
+    assert 'bundle = DIST / "MedMask"' in builder
+    assert 'executable = bundle / "MedMask.exe"' in builder
+    assert "raw.replace(bundle)" not in builder
 
 
 @pytest.mark.parametrize(
     "path",
-    ["scripts/build_macos.command", "scripts/build_windows.ps1", "MedMask.spec"],
+    [
+        "scripts/build_macos.command",
+        "scripts/build_windows.ps1",
+        "scripts/build_native.py",
+        ".github/workflows/build-desktop.yml",
+    ],
 )
 def test_build_files_do_not_hardcode_the_version(path: str) -> None:
     assert __version__ not in (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_spec_is_the_single_build_definition() -> None:
+def test_native_builder_is_the_single_build_definition() -> None:
     for script in ("scripts/build_macos.command", "scripts/build_windows.ps1"):
         contents = (ROOT / script).read_text(encoding="utf-8")
-        assert "MedMask.spec" in contents
+        assert "build_native.py" in contents
+        assert "verify_protected_build.py" in contents
         assert "test_all.py" in contents
     workflow = (ROOT / ".github/workflows/build-desktop.yml").read_text(encoding="utf-8")
-    assert "MedMask.spec" in workflow
+    assert "build_native.py" in workflow
+    assert "verify_protected_build.py" in workflow
     assert "smoke_test.py" in workflow
     assert "scripts/test_all.py" in workflow
+    assert "PYMUPDF_COMMERCIAL_LICENSE_CONFIRMED" in workflow
+
+    builder = (ROOT / "scripts" / "build_native.py").read_text(encoding="utf-8")
+    for option in (
+        "--mode=app-dist",
+        "--include-package=medmask",
+        "--include-module=rapidocr.main",
+        "--include-module=onnxruntime",
+        "--include-package-data=rapidocr:config.yaml",
+        "--force-runtime-environment-variable=MEDMASK_DISABLE_PARALLEL=1",
+        "--assume-yes-for-downloads",
+        "--python-flag=no_docstrings",
+        "--lto=",
+        "--deployment",
+        "--remove-output",
+    ):
+        assert option in builder
+
+
+def test_macos_signing_happens_after_stripping_without_deep_mode() -> None:
+    script = (ROOT / "scripts" / "build_macos.command").read_text(encoding="utf-8")
+    assert "codesign --force --deep" not in script
+    executable_sign = "codesign --force --sign - dist/MedMask.app/Contents/MacOS/MedMaskCore"
+    bundle_sign = "codesign --force --sign - dist/MedMask.app"
+    lines = script.splitlines()
+    assert executable_sign in lines
+    assert bundle_sign in lines
+    assert lines.index(executable_sign) < lines.index(bundle_sign)
 
 
 def test_release_checks_include_static_analysis_and_isolated_gui_suites() -> None:
@@ -126,6 +231,8 @@ def test_release_checks_include_static_analysis_and_isolated_gui_suites() -> Non
     assert "pytest>=9.0.3" in pyproject
     assert "pytest==9.0.3" in constraints
     assert "ruff==0.16.4" in constraints
+    assert "Nuitka==4.1.3" in constraints
+    assert "pyinstaller" not in constraints.lower()
 
 
 def test_unsafe_legacy_batch_entry_point_is_absent() -> None:
@@ -146,10 +253,11 @@ def test_builds_use_the_tested_dependency_constraints() -> None:
         assert "constraints.txt" in (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_spec_is_tracked_by_git() -> None:
-    """Файл сборки не должен попадать под общее правило *.spec в .gitignore."""
+def test_generated_resource_and_old_spec_do_not_enter_the_repository() -> None:
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert "!MedMask.spec" in ignore
+    assert "medmask/gui/_qml_resources.py" in ignore
+    assert not (ROOT / "MedMask.spec").exists()
+    assert not list((ROOT / "hooks").glob("hook-*.py"))
 
 
 def test_smoke_fixture_contains_personal_data_to_mask() -> None:

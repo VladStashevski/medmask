@@ -35,6 +35,12 @@ CLINICAL_TEXT = (
 )
 
 
+def _print_safe_report(output_dir: Path) -> None:
+    report_path = output_dir / "_ОТЧЁТ.txt"
+    if report_path.is_file():
+        print(report_path.read_text(encoding="utf-8-sig"), file=sys.stderr)
+
+
 def _create_ocr_fixture(source: Path, pymupdf) -> None:
     """Растеризует стабильный кириллический текст — в PNG нет текстового слоя."""
     with pymupdf.open() as document:
@@ -86,6 +92,7 @@ def main(command: list[str]) -> int:
         pdfs = sorted(output_dir.glob("*.pdf"))
         if len(pdfs) != 4:
             print(f"ожидалось 4 PDF, создано {len(pdfs)}", file=sys.stderr)
+            _print_safe_report(output_dir)
             return 1
         if not (output_dir / "_ОТЧЁТ.txt").is_file():
             print("отчёт не создан", file=sys.stderr)

@@ -1,0 +1,24 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="medmask/gui/qml/Main.qml">qml/Main.qml</file>
+    <file alias="medmask/gui/qml/MedMask/qmldir">qml/MedMask/qmldir</file>
+    <file alias="medmask/gui/qml/MedMask/Backdrop.qml">qml/MedMask/Backdrop.qml</file>
+    <file alias="medmask/gui/qml/MedMask/DocumentList.qml">qml/MedMask/DocumentList.qml</file>
+    <file alias="medmask/gui/qml/MedMask/EmptyState.qml">qml/MedMask/EmptyState.qml</file>
+    <file alias="medmask/gui/qml/MedMask/FileIcon.qml">qml/MedMask/FileIcon.qml</file>
+    <file alias="medmask/gui/qml/MedMask/FileRow.qml">qml/MedMask/FileRow.qml</file>
+    <file alias="medmask/gui/qml/MedMask/FolderBar.qml">qml/MedMask/FolderBar.qml</file>
+    <file alias="medmask/gui/qml/MedMask/GlassPanel.qml">qml/MedMask/GlassPanel.qml</file>
+    <file alias="medmask/gui/qml/MedMask/Glyph.qml">qml/MedMask/Glyph.qml</file>
+    <file alias="medmask/gui/qml/MedMask/IconButton.qml">qml/MedMask/IconButton.qml</file>
+    <file alias="medmask/gui/qml/MedMask/PillButton.qml">qml/MedMask/PillButton.qml</file>
+    <file alias="medmask/gui/qml/MedMask/ProgressBar.qml">qml/MedMask/ProgressBar.qml</file>
+    <file alias="medmask/gui/qml/MedMask/ProgressPanel.qml">qml/MedMask/ProgressPanel.qml</file>
+    <file alias="medmask/gui/qml/MedMask/ResizeEdges.qml">qml/MedMask/ResizeEdges.qml</file>
+    <file alias="medmask/gui/qml/MedMask/StatusIndicator.qml">qml/MedMask/StatusIndicator.qml</file>
+    <file alias="medmask/gui/qml/MedMask/Theme.qml">qml/MedMask/Theme.qml</file>
+    <file alias="medmask/gui/qml/MedMask/TitleBar.qml">qml/MedMask/TitleBar.qml</file>
+    <file alias="medmask/assets/app_glyph.png">../assets/app_glyph.png</file>
+    <file alias="medmask/assets/app_icon.png">../assets/app_icon.png</file>
+  </qresource>
+</RCC>

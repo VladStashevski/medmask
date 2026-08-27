@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, Qt, QUrl
+from PySide6.QtCore import QCoreApplication, QResource, Qt, QUrl
 from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow, QSGRendererInterface
@@ -17,6 +17,23 @@ from .window import WindowControls
 
 QML_DIR = Path(__file__).resolve().parent / "qml"
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "app_icon.png"
+
+# Во время защищённой сборки этот модуль генерирует pyside6-rcc, а Nuitka
+# компилирует его в основной исполняемый файл. В checkout его намеренно нет:
+# разработчик продолжает редактировать и загружать обычные QML-файлы.
+try:
+    from . import _qml_resources as _QML_RESOURCES
+except ImportError:
+    _QML_RESOURCES = None
+
+
+def _qml_source() -> tuple[str, QUrl]:
+    if _QML_RESOURCES is not None:
+        main_resource = ":/medmask/gui/qml/Main.qml"
+        if not QResource(main_resource).isValid():
+            raise RuntimeError("Встроенный интерфейс QML повреждён.")
+        return "qrc:/medmask/gui/qml", QUrl("qrc:/medmask/gui/qml/Main.qml")
+    return str(QML_DIR), QUrl.fromLocalFile(str(QML_DIR / "Main.qml"))
 
 
 def configure_application(application: QGuiApplication) -> None:
@@ -31,7 +48,9 @@ def configure_application(application: QGuiApplication) -> None:
     application.setApplicationVersion(__version__)
     application.setOrganizationName("MedMask")
     application.setOrganizationDomain("medmask.local")
-    if ICON_PATH.is_file():
+    if _QML_RESOURCES is not None:
+        application.setWindowIcon(QIcon(":/medmask/assets/app_icon.png"))
+    elif ICON_PATH.is_file():
         application.setWindowIcon(QIcon(str(ICON_PATH)))
 
 
@@ -49,13 +68,14 @@ def create_engine(
     environment = Environment(engine)
     controls = WindowControls(environment, engine)
 
-    engine.addImportPath(str(QML_DIR))
+    import_path, main_url = _qml_source()
+    engine.addImportPath(import_path)
     context = engine.rootContext()
     context.setContextProperty("controller", controller)
     context.setContextProperty("env", environment)
     context.setContextProperty("controls", controls)
 
-    engine.load(QUrl.fromLocalFile(str(QML_DIR / "Main.qml")))
+    engine.load(main_url)
     if not engine.rootObjects():
         raise RuntimeError("Не удалось загрузить интерфейс QML.")
 
